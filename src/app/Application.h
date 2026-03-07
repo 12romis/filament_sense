@@ -27,6 +27,8 @@ class Application {
   uint32_t last_print_ms_ = 0;
   bool has_last_weight_ = false;
   float last_weight_grams_ = 0.0F;
+  float baselineWeight_ = 0.0F;
+  bool hasBaselineWeight_ = false;
 };
 
 }  // namespace app

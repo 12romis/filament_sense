@@ -14,6 +14,10 @@ void Application::setup() {
   calibration_console_.begin(Serial);
   flash_store_.begin();
   service_.begin();
+
+  if (flash_store_.loadBaselineWeight(baselineWeight_)) {
+    hasBaselineWeight_ = true;
+  }
 }
 
 void Application::loop() {
@@ -33,6 +37,22 @@ void Application::loop() {
     has_last_weight_ = true;
   }
 
+  if (buttons_.consumePressed(0)) {
+    if (!has_last_weight_) {
+      Serial.println("baselineWeight save failed: no current weight");
+    } else {
+      baselineWeight_ = last_weight_grams_;
+      hasBaselineWeight_ = flash_store_.saveBaselineWeight(baselineWeight_);
+      if (hasBaselineWeight_) {
+        Serial.print("baselineWeight saved=");
+        Serial.print(baselineWeight_, 2);
+        Serial.println(" g");
+      } else {
+        Serial.println("baselineWeight save failed: flash write error");
+      }
+    }
+  }
+
   if (now - last_print_ms_ < 1000) {
     return;
   }
@@ -42,9 +62,15 @@ void Application::loop() {
     return;
   }
 
-  Serial.print("baseline_weight=");
+  Serial.print("baselineWeight=");
   Serial.print(last_weight_grams_, 2);
-  Serial.println(" g");
+  Serial.print(" g");
+  if (hasBaselineWeight_) {
+    Serial.print(" stored=");
+    Serial.print(baselineWeight_, 2);
+    Serial.print(" g");
+  }
+  Serial.println();
 }
 
 }  // namespace app
