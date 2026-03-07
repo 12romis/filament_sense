@@ -18,6 +18,15 @@ class Application {
   void loop();
 
  private:
+  void connectWifi();
+  void syncClock();
+  bool sendTelegramReport();
+  float calculateRemainingFilamentGrams(float currentGrossWeight) const;
+  String formatDateTime(int64_t epochSeconds) const;
+  String formatElapsedSinceBaseline() const;
+  String urlEncode(const String& input) const;
+  bool hasTelegramConfig() const;
+
   hal::ScaleManager scale_manager_;
   CalibrationConsole calibration_console_;
   hal::ButtonInput buttons_;
@@ -29,6 +38,8 @@ class Application {
   float last_weight_grams_ = 0.0F;
   float baselineWeight_ = 0.0F;
   bool hasBaselineWeight_ = false;
+  int64_t baselineTimestamp_ = 0;
+  bool hasBaselineTimestamp_ = false;
 };
 
 }  // namespace app

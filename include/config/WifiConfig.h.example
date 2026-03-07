@@ -2,8 +2,15 @@
 
 namespace config {
 
-// Copy this file to WifiConfig.h and fill values locally.
+// Copy to WifiConfig.h and fill with real values.
 constexpr const char* kWifiSsid = "YOUR_WIFI_SSID";
 constexpr const char* kWifiPassword = "YOUR_WIFI_PASSWORD";
+
+constexpr const char* kTelegramBotToken = "YOUR_TELEGRAM_BOT_TOKEN";
+constexpr const char* kTelegramChatId = "YOUR_TELEGRAM_CHAT_ID";
+
+// Used for NTP sync to format baseline date and elapsed time.
+constexpr const char* kNtpPrimary = "pool.ntp.org";
+constexpr const char* kNtpSecondary = "time.google.com";
 
 }  // namespace config
