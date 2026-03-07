@@ -20,7 +20,9 @@ class Application {
  private:
   void connectWifi();
   void syncClock();
-  bool sendTelegramReport();
+  bool sendTelegramReport(const String& message);
+  bool updateWeightMeasurement(uint32_t nowMs);
+  bool buildStatusMessage(String& outMessage) const;
   float calculateRemainingFilamentGrams(float currentGrossWeight) const;
   String formatDateTime(int64_t epochSeconds) const;
   String formatElapsedSinceBaseline() const;
@@ -32,8 +34,11 @@ class Application {
   hal::ButtonInput buttons_;
   storage::FlashStore flash_store_;
   domain::FilamentSenseService service_;
+
   uint32_t last_tick_ms_ = 0;
-  uint32_t last_print_ms_ = 0;
+  uint32_t last_measure_ms_ = 0;
+  bool first_measurement_done_ = false;
+
   bool has_last_weight_ = false;
   float last_weight_grams_ = 0.0F;
   float baselineWeight_ = 0.0F;

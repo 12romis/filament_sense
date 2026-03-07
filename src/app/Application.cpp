@@ -19,6 +19,7 @@ namespace {
 constexpr uint32_t kWifiConnectTimeoutMs = 15000;
 constexpr uint32_t kNtpSyncTimeoutMs = 10000;
 constexpr int64_t kMinValidEpoch = 1700000000;
+constexpr uint32_t kWeightMeasureIntervalMs = 60000;
 }  // namespace
 
 Application::Application() : calibration_console_(scale_manager_) {}
@@ -41,6 +42,9 @@ void Application::setup() {
 
   connectWifi();
   syncClock();
+
+  // First measurement attempt immediately after startup.
+  updateWeightMeasurement(0);
 }
 
 void Application::loop() {
@@ -54,10 +58,8 @@ void Application::loop() {
   buttons_.poll(now);
   service_.tick(now);
 
-  float fresh_weight_grams = 0.0F;
-  if (scale_manager_.readWeightGrams(fresh_weight_grams)) {
-    last_weight_grams_ = fresh_weight_grams;
-    has_last_weight_ = true;
+  if (!first_measurement_done_ || (now - last_measure_ms_) >= kWeightMeasureIntervalMs) {
+    updateWeightMeasurement(now);
   }
 
   if (buttons_.consumePressed(0)) {
@@ -90,31 +92,19 @@ void Application::loop() {
   }
 
   if (buttons_.consumePressed(1)) {
-    if (!sendTelegramReport()) {
+    String message;
+    if (!buildStatusMessage(message)) {
+      Serial.println("telegram report failed: no baseline/current weight");
+      return;
+    }
+
+    Serial.println(message);
+    if (!sendTelegramReport(message)) {
       Serial.println("telegram send failed");
     } else {
       Serial.println("telegram sent");
     }
   }
-
-  if (now - last_print_ms_ < 1000) {
-    return;
-  }
-
-  last_print_ms_ = now;
-  if (!has_last_weight_) {
-    return;
-  }
-
-  Serial.print("baselineWeight=");
-  Serial.print(last_weight_grams_, 2);
-  Serial.print(" g");
-  if (hasBaselineWeight_) {
-    Serial.print(" stored=");
-    Serial.print(baselineWeight_, 2);
-    Serial.print(" g");
-  }
-  Serial.println();
 }
 
 void Application::connectWifi() {
@@ -154,12 +144,56 @@ void Application::syncClock() {
   Serial.println("ntp not synced");
 }
 
-bool Application::sendTelegramReport() {
-  if (!has_last_weight_ || !hasBaselineWeight_) {
+bool Application::sendTelegramReport(const String& message) {
+  if (WiFi.status() != WL_CONNECTED || !hasTelegramConfig()) {
     return false;
   }
 
-  if (WiFi.status() != WL_CONNECTED || !hasTelegramConfig()) {
+  const String url =
+      String("https://api.telegram.org/bot") + config::kTelegramBotToken + "/sendMessage";
+
+  WiFiClientSecure client;
+  client.setInsecure();
+
+  HTTPClient http;
+  if (!http.begin(client, url)) {
+    return false;
+  }
+
+  http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+
+  const String payload = "chat_id=" + urlEncode(String(config::kTelegramChatId)) +
+                         "&text=" + urlEncode(message);
+
+  const int code = http.POST(payload);
+  http.end();
+
+  return code > 0 && code < 300;
+}
+
+bool Application::updateWeightMeasurement(uint32_t nowMs) {
+  float kRawUnitsPerGram = 0.0F;
+  long rawOffset = 0;
+  scale_manager_.getCalibration(kRawUnitsPerGram, rawOffset);
+
+  if (fabsf(kRawUnitsPerGram) < 1e-6F) {
+    return false;
+  }
+
+  long rawAverage = 0;
+  if (!scale_manager_.readRawAverage(rawAverage)) {
+    return false;
+  }
+
+  last_weight_grams_ = static_cast<float>(rawAverage - rawOffset) / kRawUnitsPerGram;
+  has_last_weight_ = true;
+  first_measurement_done_ = true;
+  last_measure_ms_ = nowMs;
+  return true;
+}
+
+bool Application::buildStatusMessage(String& outMessage) const {
+  if (!has_last_weight_ || !hasBaselineWeight_) {
     return false;
   }
 
@@ -185,26 +219,8 @@ bool Application::sendTelegramReport() {
   message += "Час від baseline: ";
   message += formatElapsedSinceBaseline();
 
-  const String url =
-      String("https://api.telegram.org/bot") + config::kTelegramBotToken + "/sendMessage";
-
-  WiFiClientSecure client;
-  client.setInsecure();
-
-  HTTPClient http;
-  if (!http.begin(client, url)) {
-    return false;
-  }
-
-  http.addHeader("Content-Type", "application/x-www-form-urlencoded");
-
-  const String payload = "chat_id=" + urlEncode(String(config::kTelegramChatId)) +
-                         "&text=" + urlEncode(message);
-
-  const int code = http.POST(payload);
-  http.end();
-
-  return code > 0 && code < 300;
+  outMessage = message;
+  return true;
 }
 
 float Application::calculateRemainingFilamentGrams(float currentGrossWeight) const {
