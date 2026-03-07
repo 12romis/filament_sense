@@ -1,148 +1,154 @@
 # FilamentSense
 
-FilamentSense — проєкт для ESP32 (Arduino + PlatformIO), який вимірює вагу котушки філаменту.
+FilamentSense — проєкт для ESP32 (Arduino + PlatformIO), який контролює вагу філаменту на 3D-принтері.
 
-Ключова апаратна схема на цьому етапі:
-- 4 тензодатчики механічно формують платформу;
-- сигнал з 4 датчиків зводиться в ОДИН міст (через суматор/правильне wiring);
-- цей міст читає ОДИН модуль HX711;
-- HX711 підключений до ESP32 по `DT/SCK`.
+Схема на поточному етапі:
+- 4 тензодатчики формують платформу;
+- сигнал зводиться в один міст (через правильне wiring/combinator);
+- міст читається одним HX711;
+- ESP32 читає вагу, зберігає baseline, надсилає статус/алерти в Telegram.
 
-Поточний стан:
-- є каркас застосунку;
-- є `ScaleManager` для читання ваги з одного HX711;
-- є консольне калібрування коефіцієнта `kHx711RawUnitsPerGram`;
-- `baselineWeight` виводиться у `Serial`;
-- натискання кнопки `Baseline Save` перезаписує `baselineWeight` у flash.
+## 1. Що реалізовано
 
-## 1. Що потрібно для запуску
+- читання ваги з HX711;
+- консольне калібрування HX711 (`calib ...`);
+- збереження `baselineWeight` у flash по кнопці #1;
+- збереження timestamp запису baseline у flash;
+- підключення до Wi-Fi на старті;
+- спроба NTP синхронізації часу на старті;
+- ручний Telegram-звіт по кнопці #2;
+- автоматичні Telegram-алерти по порогах залишку філаменту 500 г і 100 г;
+- антидублювання алертів (без спаму).
 
-- Плата ESP32 (профіль `esp32dev`)
+## 2. Потрібні компоненти
+
+- ESP32 (`esp32dev`)
 - 4 тензодатчики
 - 1 модуль HX711
 - 2 кнопки
-- USB-кабель для прошивки/моніторингу
-- Python + віртуальне середовище
+- USB-кабель
+- Python + venv + PlatformIO
 
-## 2. Структура і ключові налаштування
+## 3. Конфіги
 
-Головні параметри заліза вказуються у:
-- `include/config/HardwareConfig.h`
+### 3.1 Hardware config
 
-Важливі поля:
-- `kScaleHx711` — піни `DOUT/SCK` одного HX711
-- `kButtonPins` — піни кнопок
-- `kHx711RawUnitsPerGram` — калібрувальний коефіцієнт (raw units на 1 грам)
+Файл: `include/config/HardwareConfig.h`
 
-## 3. Піни підключення (з поточного конфігу)
+Ключові параметри:
+- `kScaleHx711` — піни HX711 `DOUT/SCK`
+- `kHx711RawUnitsPerGram` — коефіцієнт калібрування
+- `kFilamentSpoolWeightGrams` — вага котушки (за замовчуванням `3000` г)
+- `kFilamentWarningThresholdGrams` — warning-поріг (`500` г)
+- `kFilamentCriticalThresholdGrams` — critical-поріг (`100` г)
+- `kButtonPins` — піни двох кнопок
 
-### HX711 (один модуль)
+### 3.2 Wi-Fi + Telegram config
 
-Згідно `kScaleHx711 = {32, 25}`:
-- `HX711 DT` -> `ESP32 GPIO32`
-- `HX711 SCK` -> `ESP32 GPIO25`
+Створіть `include/config/WifiConfig.h` як копію з `include/config/WifiConfig.h.example` і заповніть:
+- `kWifiSsid`
+- `kWifiPassword`
+- `kTelegramBotToken`
+- `kTelegramChatId`
+- `kNtpPrimary`, `kNtpSecondary` (можна лишити дефолт)
 
-Живлення HX711:
-- `HX711 GND` -> `ESP32 GND`
-- `HX711 VCC` -> `ESP32 3V3` (рекомендовано)
+## 4. Підключення
 
-Примітки:
-- `DT` на платі HX711 = це `DOUT` у коді.
-- Обов'язково зробіть спільну землю (`GND`) між ESP32 і HX711.
+### 4.1 HX711 -> ESP32
 
-### Кнопки
+Для `kScaleHx711 = {32, 25}`:
+- `HX711 DT` -> `GPIO32`
+- `HX711 SCK` -> `GPIO25`
+- `HX711 GND` -> `GND`
+- `HX711 VCC` -> `3V3` (рекомендовано)
 
-1. `Baseline Save` (рекомендовано позначити червоним): `GPIO18`
-2. `Aux` (резерв/майбутня логіка): `GPIO19`
+Примітка: `DT` на модулі = `DOUT` у коді.
 
-Примітки:
-- У коді для кнопок використано `INPUT_PULLUP`, тобто кнопка має замикати пін на `GND`.
-- Для 4 тензодатчиків використовуйте правильну схему сумування сигналу (напр. combinator board для load cells).
+### 4.2 Кнопки -> ESP32
 
-## 4. Логіка кнопки Baseline Save
+У коді `INPUT_PULLUP`, отже кнопка має замикати пін на `GND`.
 
-Кнопка `Baseline Save` (GPIO18) працює так:
-1. Після натискання береться остання валідна вага з HX711.
-2. Це значення записується в flash як `baselineWeight`.
-3. У `Serial` друкується:
-   - `baselineWeight saved=... g` при успішному записі;
-   - `baselineWeight save failed: ...` при помилці.
+- Кнопка #1: `Baseline Save` (рекомендовано позначити червоним) -> `GPIO18`
+- Кнопка #2: `Status / Telegram Report` -> `GPIO19`
 
-Що відбувається після перезапуску:
-- `baselineWeight` завантажується з flash автоматично і показується як `stored=... g` у періодичному логові.
+## 5. Логіка вимірювань
 
-## 5. Розгортання середовища
+- вимірювання виконується **раз на хвилину**;
+- перший вимір робиться **одразу після старту**;
+- постійного спаму у Serial немає.
 
-У корені проєкту:
+## 6. Логіка кнопок
 
-```bash
-python3 -m venv .venv
-.venv/bin/pip install --upgrade pip
-.venv/bin/pip install platformio
-```
+### 6.1 Baseline Save (GPIO18)
 
-Збірка:
+При натисканні:
+1. Береться остання валідна вага як `baselineWeight`.
+2. `baselineWeight` зберігається у flash.
+3. Записується timestamp baseline (якщо час валідний після NTP).
+4. Скидається цикл алертів 500/100 г для нового baseline.
 
-```bash
-.venv/bin/pio run
-```
+Логи:
+- `baselineWeight saved=... g`
+- або `baselineWeight save failed: ...`
 
-Прошивка:
+### 6.2 Status / Telegram Report (GPIO19)
 
-```bash
-.venv/bin/pio run -t upload
-```
+При натисканні:
+- формується звіт;
+- цей самий текст друкується в Serial;
+- цей самий текст надсилається в Telegram.
 
-Serial monitor:
+Формат звіту:
+1. `🔴 ФІЛАМЕНТУ ЗАЛИШИЛОСЬ: ... г`
+2. `Початкова вага брутто: ...` + дата запису baseline
+3. `Поточна вага брутто: ...`
+4. `Час від baseline: ...`
 
-```bash
-.venv/bin/pio device monitor -b 115200
-```
+## 7. Автоалерти 500 г / 100 г
 
-## 6. Перший запуск
+Залишок рахується так:
+- `abs(baselineWeight - currentGrossWeight - kFilamentSpoolWeightGrams)`
 
-1. Зберіть і прошийте firmware.
-2. Відкрийте serial monitor на `115200`.
-3. Переконайтесь, що з'являються рядки виду:
-   - `baselineWeight=... g`
+Поведінка:
+- при досягненні `<= 500 г` надсилається алерт;
+- при досягненні `<= 100 г` надсилається повторний алерт;
+- текст алерту:
+  - `⚠️ Увага! Закінчується філамент.`
+  - з нового рядка повний статус (як у ручному звіті).
 
-Якщо нічого не друкується, найчастіше причина:
-- HX711 не готовий;
-- немає живлення модуля;
-- відсутній спільний `GND`;
-- переплутані `DT/SCK`.
+Антиспам:
+- кожен поріг позначається як "надісланий" після успіху;
+- повторів по тому ж порогу більше немає;
+- якщо відправка неуспішна, буде retry на наступному циклі вимірювання (раз на хвилину);
+- після нового `baselineWeight` прапори порогів скидаються.
 
-## 7. Калібрування коефіцієнта через консоль
+## 8. Калібрування
 
-Після старту в `Serial` доступні команди:
+Serial-команди:
 - `help`
 - `calib tare`
 - `calib known <grams>`
 - `calib show`
 
-Рекомендований сценарій:
+Після калібрування перенесіть `kHx711RawUnitsPerGram` в `HardwareConfig.h`.
 
-1. Прибрати еталонний вантаж (база в "нульовому" стані).
-2. Ввести `calib tare`.
-3. Поставити відомий вантаж, наприклад 1000 г.
-4. Ввести `calib known 1000`.
-5. Отримати вивід `calib kHx711RawUnitsPerGram=...`.
-6. Вписати це значення в `include/config/HardwareConfig.h` у `kHx711RawUnitsPerGram`.
+## 9. Розгортання
 
-Примітка:
-- Після перезапуску береться значення з `HardwareConfig.h`.
+```bash
+python3 -m venv .venv
+.venv/bin/pip install --upgrade pip
+.venv/bin/pip install platformio
+.venv/bin/pio run
+.venv/bin/pio run -t upload
+.venv/bin/pio device monitor -b 115200
+```
 
-## 8. Важливі обмеження поточного етапу
+## 10. Архітектура
 
-- Логіка періодичного контролю кожні 5 хв і нотифікацій ще не реалізована.
-
-## 9. Архітектура (коротко)
-
-- `src/hal/*` — доступ до заліза
+- `src/hal/*` — апаратний доступ
 - `src/domain/*` — бізнес-логіка
-- `src/app/*` — orchestration (`setup/loop`, консоль, інтеграція)
-
-Це зроблено, щоб відокремити бізнес-правила від роботи з GPIO/HX711.
+- `src/app/*` — orchestration
+- `src/storage/*` — flash persistence
 
 ![alt text](image.png)
 ![alt text](image-1.png)

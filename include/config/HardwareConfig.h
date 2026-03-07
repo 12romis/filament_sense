@@ -16,6 +16,10 @@ constexpr float kHx711RawUnitsPerGram = 1000.0F;
 // Default filament spool nominal weight (grams). User requested default: 3 kg.
 constexpr float kFilamentSpoolWeightGrams = 3000.0F;
 
+// Remaining filament warning thresholds (grams).
+constexpr float kFilamentWarningThresholdGrams = 500.0F;
+constexpr float kFilamentCriticalThresholdGrams = 100.0F;
+
 constexpr size_t kButtonCount = 2;
 constexpr uint8_t kButtonPins[kButtonCount] = {18, 19};
 

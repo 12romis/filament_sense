@@ -81,6 +81,10 @@ void Application::loop() {
         flash_store_.saveBaselineTimestamp(0);
       }
 
+      // New baseline starts a new alert lifecycle.
+      warning500_sent_ = false;
+      warning100_sent_ = false;
+
       if (hasBaselineWeight_) {
         Serial.print("baselineWeight saved=");
         Serial.print(baselineWeight_, 2);
@@ -189,6 +193,8 @@ bool Application::updateWeightMeasurement(uint32_t nowMs) {
   has_last_weight_ = true;
   first_measurement_done_ = true;
   last_measure_ms_ = nowMs;
+
+  checkFilamentThresholdAlerts();
   return true;
 }
 
@@ -220,6 +226,50 @@ bool Application::buildStatusMessage(String& outMessage) const {
   message += formatElapsedSinceBaseline();
 
   outMessage = message;
+  return true;
+}
+
+void Application::checkFilamentThresholdAlerts() {
+  if (!has_last_weight_ || !hasBaselineWeight_) {
+    return;
+  }
+
+  const float remaining = calculateRemainingFilamentGrams(last_weight_grams_);
+
+  if (remaining <= config::kFilamentWarningThresholdGrams && !warning500_sent_) {
+    if (trySendThresholdAlert("⚠️ Увага! Закінчується філамент.", warning500_sent_)) {
+      Serial.println("warning 500g sent");
+    } else {
+      Serial.println("warning 500g send failed");
+    }
+  }
+
+  if (remaining <= config::kFilamentCriticalThresholdGrams && !warning100_sent_) {
+    if (trySendThresholdAlert("⚠️ Увага! Закінчується філамент.", warning100_sent_)) {
+      Serial.println("warning 100g sent");
+    } else {
+      Serial.println("warning 100g send failed");
+    }
+  }
+}
+
+bool Application::trySendThresholdAlert(const char* header, bool& sentFlag) {
+  String baseMessage;
+  if (!buildStatusMessage(baseMessage)) {
+    return false;
+  }
+
+  String alertMessage;
+  alertMessage.reserve(baseMessage.length() + 64);
+  alertMessage += header;
+  alertMessage += "\n";
+  alertMessage += baseMessage;
+
+  if (!sendTelegramReport(alertMessage)) {
+    return false;
+  }
+
+  sentFlag = true;
   return true;
 }
 

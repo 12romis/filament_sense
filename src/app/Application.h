@@ -23,6 +23,8 @@ class Application {
   bool sendTelegramReport(const String& message);
   bool updateWeightMeasurement(uint32_t nowMs);
   bool buildStatusMessage(String& outMessage) const;
+  void checkFilamentThresholdAlerts();
+  bool trySendThresholdAlert(const char* header, bool& sentFlag);
   float calculateRemainingFilamentGrams(float currentGrossWeight) const;
   String formatDateTime(int64_t epochSeconds) const;
   String formatElapsedSinceBaseline() const;
@@ -45,6 +47,9 @@ class Application {
   bool hasBaselineWeight_ = false;
   int64_t baselineTimestamp_ = 0;
   bool hasBaselineTimestamp_ = false;
+
+  bool warning500_sent_ = false;
+  bool warning100_sent_ = false;
 };
 
 }  // namespace app
