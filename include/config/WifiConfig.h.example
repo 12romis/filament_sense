@@ -1,0 +1,9 @@
+#pragma once
+
+namespace config {
+
+// Copy this file to WifiConfig.h and fill values locally.
+constexpr const char* kWifiSsid = "YOUR_WIFI_SSID";
+constexpr const char* kWifiPassword = "YOUR_WIFI_PASSWORD";
+
+}  // namespace config
