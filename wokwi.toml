@@ -1,0 +1,8 @@
+[wokwi]
+version = 1
+firmware = ".pio/build/esp32dev/firmware.bin"
+elf = ".pio/build/esp32dev/firmware.elf"
+gdbServerPort = 3333
+
+# Create diagram.json in the project root to describe ESP32, HX711, and buttons wiring.
+diagram = "diagram.json"

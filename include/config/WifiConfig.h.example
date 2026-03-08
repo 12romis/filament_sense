@@ -14,3 +14,10 @@ constexpr const char* kNtpPrimary = "pool.ntp.org";
 constexpr const char* kNtpSecondary = "time.google.com";
 
 }  // namespace config
+
+// Simulation/offline mode: no real Wi-Fi and no real HTTP requests are performed.
+// 1 -> print reports to Serial only
+// 0 -> use real Wi-Fi + Telegram API
+#ifndef FILAMENTSENSE_OFFLINE_MODE
+#define FILAMENTSENSE_OFFLINE_MODE 0
+#endif

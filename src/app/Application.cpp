@@ -13,6 +13,10 @@
 #include "config/WifiConfig.h.example"
 #endif
 
+#ifndef FILAMENTSENSE_OFFLINE_MODE
+#define FILAMENTSENSE_OFFLINE_MODE 0
+#endif
+
 namespace app {
 
 namespace {
@@ -112,6 +116,11 @@ void Application::loop() {
 }
 
 void Application::connectWifi() {
+  #if FILAMENTSENSE_OFFLINE_MODE
+    Serial.println("offline mode: wifi disabled");
+    return;
+  #endif
+
   WiFi.mode(WIFI_STA);
   WiFi.begin(config::kWifiSsid, config::kWifiPassword);
 
@@ -129,6 +138,11 @@ void Application::connectWifi() {
 }
 
 void Application::syncClock() {
+  #if FILAMENTSENSE_OFFLINE_MODE
+    Serial.println("offline mode: ntp disabled");
+    return;
+  #endif
+
   if (WiFi.status() != WL_CONNECTED) {
     return;
   }
@@ -149,6 +163,12 @@ void Application::syncClock() {
 }
 
 bool Application::sendTelegramReport(const String& message) {
+  #if FILAMENTSENSE_OFFLINE_MODE
+    Serial.println("offline mode: telegram disabled");
+    (void)message;
+    return true;
+  #endif
+
   if (WiFi.status() != WL_CONNECTED || !hasTelegramConfig()) {
     return false;
   }
@@ -209,21 +229,20 @@ bool Application::buildStatusMessage(String& outMessage) const {
   message.reserve(512);
   message += "🔴 ФІЛАМЕНТУ ЗАЛИШИЛОСЬ: ";
   message += String(remaining, 0);
-  message += " г\n";
+  message += " \n";
 
   message += "Початкова вага брутто: ";
   message += String(baselineWeight_, 2);
-  message += " г\n";
-  message += "Дата запису baseline: ";
+  message += " (";
   message += formatDateTime(baselineTimestamp_);
+  message += ")\n";
+  message += "Пройшло: ";
+  message += formatElapsedSinceBaseline();
   message += "\n";
 
   message += "Поточна вага брутто: ";
   message += String(last_weight_grams_, 2);
-  message += " г\n";
-
-  message += "Час від baseline: ";
-  message += formatElapsedSinceBaseline();
+  message += "\n";
 
   outMessage = message;
   return true;
@@ -264,6 +283,9 @@ bool Application::trySendThresholdAlert(const char* header, bool& sentFlag) {
   alertMessage += header;
   alertMessage += "\n";
   alertMessage += baseMessage;
+
+  // Always print alert payload to Serial for easier simulation/debug.
+  Serial.println(alertMessage);
 
   if (!sendTelegramReport(alertMessage)) {
     return false;
