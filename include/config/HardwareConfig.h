@@ -8,7 +8,7 @@
 namespace config {
 
 // One HX711 module receives the combined bridge signal from 4 load cells.
-constexpr hal::Hx711PinConfig kScaleHx711 = {32, 25};
+constexpr hal::Hx711PinConfig kScaleHx711 = {4, 3};
 
 // HX711 raw units per gram. Calibrate this on real hardware.
 constexpr float kHx711RawUnitsPerGram = 1000.0F;
@@ -22,5 +22,7 @@ constexpr float kFilamentCriticalThresholdGrams = 100.0F;
 
 constexpr size_t kButtonCount = 2;
 constexpr uint8_t kButtonPins[kButtonCount] = {18, 19};
+
+#define LED_PIN 15
 
 }  // namespace config

@@ -17,6 +17,9 @@
 #define FILAMENTSENSE_OFFLINE_MODE 0
 #endif
 
+bool ledActive = false;
+unsigned long ledToggleTime = 0;
+
 namespace app {
 
 namespace {
@@ -30,9 +33,12 @@ Application::Application() : calibration_console_(scale_manager_) {}
 
 void Application::setup() {
   Serial.begin(115200);
+  Serial.println("Application setup start");
 
+  pinMode(LED_PIN, OUTPUT);
   buttons_.begin(config::kButtonPins, config::kButtonCount);
   scale_manager_.begin(config::kScaleHx711, config::kHx711RawUnitsPerGram);
+  Serial.println("HX711 test start");
   calibration_console_.begin(Serial);
   flash_store_.begin();
   service_.begin();
@@ -67,6 +73,7 @@ void Application::loop() {
   }
 
   if (buttons_.consumePressed(0)) {
+    turnOnLed(now);
     if (!has_last_weight_) {
       Serial.println("baselineWeight save failed: no current weight");
     } else {
@@ -100,6 +107,7 @@ void Application::loop() {
   }
 
   if (buttons_.consumePressed(1)) {
+    turnOnLed(now);
     String message;
     if (!buildStatusMessage(message)) {
       Serial.println("telegram report failed: no baseline/current weight");
@@ -112,6 +120,11 @@ void Application::loop() {
     } else {
       Serial.println("telegram sent");
     }
+  }
+
+  if (ledActive && (now - ledToggleTime) >= 1000) {
+    digitalWrite(LED_PIN, LOW);
+    ledActive = false;
   }
 }
 
@@ -366,6 +379,12 @@ bool Application::hasTelegramConfig() const {
          String(config::kTelegramBotToken).indexOf("YOUR_") != 0 &&
          String(config::kTelegramChatId).length() > 0 &&
          String(config::kTelegramChatId).indexOf("YOUR_") != 0;
+}
+
+void Application::turnOnLed(const uint32_t now){
+  digitalWrite(LED_PIN, HIGH);
+  ledActive = true;
+  ledToggleTime = now;
 }
 
 }  // namespace app

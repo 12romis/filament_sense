@@ -30,6 +30,7 @@ class Application {
   String formatElapsedSinceBaseline() const;
   String urlEncode(const String& input) const;
   bool hasTelegramConfig() const;
+  void turnOnLed(const uint32_t now);
 
   hal::ScaleManager scale_manager_;
   CalibrationConsole calibration_console_;
