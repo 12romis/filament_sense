@@ -4,8 +4,8 @@
 
 namespace hal {
 
-void ScaleManager::begin(const Hx711PinConfig& config, float raw_units_per_gram) {
-  setCalibration(raw_units_per_gram, 0);
+void ScaleManager::begin(const Hx711PinConfig& config, float raw_units_per_gram, long raw_offset_units) {
+  setCalibration(raw_units_per_gram, raw_offset_units);
   scale_.begin(config.dout_pin, config.sck_pin);
   initialized_ = true;
 }
@@ -20,6 +20,19 @@ bool ScaleManager::readRawAverage(long& out_raw_sum) {
   }
 
   out_raw_sum = scale_.read_average(kAverageSamples);
+  return true;
+}
+
+bool ScaleManager::readRaw(long& out_raw) {
+  if (!initialized_) {
+    return false;
+  }
+
+  if (!scale_.is_ready()) {
+    return false;
+  }
+
+  out_raw = scale_.read();
   return true;
 }
 

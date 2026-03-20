@@ -37,8 +37,7 @@ void Application::setup() {
 
   pinMode(LED_PIN, OUTPUT);
   buttons_.begin(config::kButtonPins, config::kButtonCount);
-  scale_manager_.begin(config::kScaleHx711, config::kHx711RawUnitsPerGram);
-  Serial.println("HX711 test start");
+  scale_manager_.begin(config::kScaleHx711, config::kHx711RawUnitsPerGram, config::kHx711RawOffset);
   calibration_console_.begin(Serial);
   flash_store_.begin();
   service_.begin();
@@ -74,8 +73,9 @@ void Application::loop() {
 
   if (buttons_.consumePressed(0)) {
     turnOnLed(now);
+    updateWeightMeasurement(now);
     if (!has_last_weight_) {
-      Serial.println("baselineWeight save failed: no current weight");
+      Serial.println("baselineWeight save failed: no current weight\n");
     } else {
       baselineWeight_ = last_weight_grams_;
       hasBaselineWeight_ = flash_store_.saveBaselineWeight(baselineWeight_);
@@ -95,30 +95,32 @@ void Application::loop() {
       // New baseline starts a new alert lifecycle.
       warning500_sent_ = false;
       warning100_sent_ = false;
+      warning10_sent_ = false;
 
       if (hasBaselineWeight_) {
         Serial.print("baselineWeight saved=");
         Serial.print(baselineWeight_, 2);
-        Serial.println(" g");
+        Serial.println(" g\n");
       } else {
-        Serial.println("baselineWeight save failed: flash write error");
+        Serial.println("baselineWeight save failed: flash write error\n");
       }
     }
   }
 
   if (buttons_.consumePressed(1)) {
     turnOnLed(now);
+    updateWeightMeasurement(now);
     String message;
     if (!buildStatusMessage(message)) {
-      Serial.println("telegram report failed: no baseline/current weight");
+      Serial.println("telegram report failed: no baseline/current weight\n");
       return;
     }
 
     Serial.println(message);
     if (!sendTelegramReport(message)) {
-      Serial.println("telegram send failed");
+      Serial.println("telegram send failed\n");
     } else {
-      Serial.println("telegram sent");
+      Serial.println("telegram sent\n");
     }
   }
 
@@ -227,6 +229,19 @@ bool Application::updateWeightMeasurement(uint32_t nowMs) {
   first_measurement_done_ = true;
   last_measure_ms_ = nowMs;
 
+  // Serial.print("Calibration: kRawUnitsPerGram=");
+  // Serial.print(kRawUnitsPerGram, 6);
+  // Serial.print(" rawOffset=");
+  // Serial.println(rawOffset, 5); 
+
+  // Serial.print("Weight (g): ");
+  // Serial.println(last_weight_grams_, 5);
+
+  // Serial.print("Raw average: ");
+  // Serial.println(rawAverage, 5);
+
+  // Serial.println("----\n");
+
   checkFilamentThresholdAlerts();
   return true;
 }
@@ -270,17 +285,25 @@ void Application::checkFilamentThresholdAlerts() {
 
   if (remaining <= config::kFilamentWarningThresholdGrams && !warning500_sent_) {
     if (trySendThresholdAlert("⚠️ Увага! Закінчується філамент.", warning500_sent_)) {
-      Serial.println("warning 500g sent");
+      Serial.println("warning 500g sent\n");
     } else {
-      Serial.println("warning 500g send failed");
+      Serial.println("warning 500g send failed\n");
     }
   }
 
   if (remaining <= config::kFilamentCriticalThresholdGrams && !warning100_sent_) {
     if (trySendThresholdAlert("⚠️ Увага! Закінчується філамент.", warning100_sent_)) {
-      Serial.println("warning 100g sent");
+      Serial.println("warning 100g sent\n");
     } else {
-      Serial.println("warning 100g send failed");
+      Serial.println("warning 100g send failed\n");
+    }
+  }
+
+  if (remaining <= config::kFilamentAlmostEmptyGrams && !warning10_sent_) {
+    if (trySendThresholdAlert("⚠️ Увага! Потрібна заміна філаменту.", warning10_sent_)) {
+      Serial.println("warning 10g sent\n");
+    } else {
+      Serial.println("warning 10g send failed\n");
     }
   }
 }

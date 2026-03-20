@@ -51,6 +51,7 @@ class Application {
 
   bool warning500_sent_ = false;
   bool warning100_sent_ = false;
+  bool warning10_sent_ = false;
 };
 
 }  // namespace app
