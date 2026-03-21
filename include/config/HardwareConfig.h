@@ -10,9 +10,9 @@ namespace config {
 // One HX711 module receives the combined bridge signal from 4 load cells.
 constexpr hal::Hx711PinConfig kScaleHx711 = {4, 3};  // config.dout_pin, config.sck_pin
 
-// HX711 raw units per gram. Calibrate this on real hardware.
-constexpr float kHx711RawUnitsPerGram = 25.798122F;
-constexpr long kHx711RawOffset = -82483;  // HX711 raw value at zero load. Calibrate this on real hardware.
+// moved to FlashStore for calibration
+// constexpr float kHx711RawUnitsPerGram = 24.635632F;  // HX711 raw units per gram. Calibrate this on real hardware.
+// constexpr long kHx711RawOffset = -87268;  // HX711 raw value at zero load. Calibrate this on real hardware.
 
 // Default filament spool nominal weight (grams). User requested default: 3 kg.
 constexpr float kFilamentSpoolWeightGrams = 3000.0F;

@@ -3,12 +3,14 @@
 #include <Arduino.h>
 
 #include "hal/scale/ScaleManager.h"
+#include "storage/FlashStore.h"
 
 namespace app {
 
 class CalibrationConsole {
  public:
-  explicit CalibrationConsole(hal::ScaleManager& scale_manager);
+  CalibrationConsole(hal::ScaleManager& scale_manager,
+                     storage::FlashStore& flash_store);
 
   void begin(Stream& serial);
   void poll(uint32_t now_ms);
@@ -21,6 +23,7 @@ class CalibrationConsole {
   static constexpr size_t kBufferSize = 96;
 
   hal::ScaleManager& scale_manager_;
+  storage::FlashStore& flash_store_;
   Stream* serial_ = nullptr;
   char buffer_[kBufferSize] = {0};
   size_t buffer_len_ = 0;

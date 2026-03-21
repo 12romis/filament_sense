@@ -137,8 +137,6 @@ Serial-команди:
 - `calib known <grams>`
 - `calib show`
 
-Після калібрування перенесіть `kHx711RawUnitsPerGram` в `HardwareConfig.h`.
-
 ## 9. Розгортання
 
 ```bash

@@ -49,9 +49,17 @@ class Application {
   int64_t baselineTimestamp_ = 0;
   bool hasBaselineTimestamp_ = false;
 
+  float kHx711RawUnitsPerGram_ = 0.0F;
+  long hx711TareOffset_ = 0;
+
   bool warning500_sent_ = false;
+  const char* warning500_key_ = "warning500Sent";
+
   bool warning100_sent_ = false;
+  const char* warning100_key_ = "warning100Sent";
+  
   bool warning10_sent_ = false;
+  const char* warning10_key_ = "warning10Sent";
 };
 
 }  // namespace app

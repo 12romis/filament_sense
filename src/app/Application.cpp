@@ -29,17 +29,16 @@ constexpr int64_t kMinValidEpoch = 1700000000;
 constexpr uint32_t kWeightMeasureIntervalMs = 60000;
 }  // namespace
 
-Application::Application() : calibration_console_(scale_manager_) {}
+Application::Application() : calibration_console_(scale_manager_, flash_store_) {}
 
 void Application::setup() {
   Serial.begin(115200);
   Serial.println("Application setup start");
 
   pinMode(LED_PIN, OUTPUT);
-  buttons_.begin(config::kButtonPins, config::kButtonCount);
-  scale_manager_.begin(config::kScaleHx711, config::kHx711RawUnitsPerGram, config::kHx711RawOffset);
-  calibration_console_.begin(Serial);
   flash_store_.begin();
+  buttons_.begin(config::kButtonPins, config::kButtonCount);
+  calibration_console_.begin(Serial);
   service_.begin();
 
   if (flash_store_.loadBaselineWeight(baselineWeight_)) {
@@ -48,6 +47,19 @@ void Application::setup() {
   if (flash_store_.loadBaselineTimestamp(baselineTimestamp_) && baselineTimestamp_ > 0) {
     hasBaselineTimestamp_ = true;
   }
+  if (flash_store_.loadThresholdAlertSent(warning500_sent_, warning500_key_)) {
+    warning500_sent_ = true;
+  }
+  if (flash_store_.loadThresholdAlertSent(warning100_sent_, warning100_key_)) {
+    warning100_sent_ = true;
+  }
+  if (flash_store_.loadThresholdAlertSent(warning10_sent_, warning10_key_)) {
+    warning10_sent_ = true;
+  }
+
+  flash_store_.loadkHx711RawUnitsPerGram(kHx711RawUnitsPerGram_);
+  flash_store_.loadHx711TareOffset(hx711TareOffset_);  
+  scale_manager_.begin(config::kScaleHx711, kHx711RawUnitsPerGram_, hx711TareOffset_);
 
   connectWifi();
   syncClock();
@@ -94,8 +106,11 @@ void Application::loop() {
 
       // New baseline starts a new alert lifecycle.
       warning500_sent_ = false;
+      flash_store_.saveThresholdAlertSent(warning500_sent_, warning500_key_);
       warning100_sent_ = false;
+      flash_store_.saveThresholdAlertSent(warning100_sent_, warning100_key_);
       warning10_sent_ = false;
+      flash_store_.saveThresholdAlertSent(warning10_sent_, warning10_key_);
 
       if (hasBaselineWeight_) {
         Serial.print("baselineWeight saved=");
@@ -255,22 +270,21 @@ bool Application::buildStatusMessage(String& outMessage) const {
 
   String message;
   message.reserve(512);
-  message += "🔴 ФІЛАМЕНТУ ЗАЛИШИЛОСЬ: ";
+  message += "⚖️ Філаменту залишилось: ";
   message += String(remaining, 0);
-  message += " \n";
+  message += " г. \n\n";
 
-  message += "Початкова вага брутто: ";
+  message += "📦 Початкова вага брутто: ";
   message += String(baselineWeight_, 2);
-  message += " (";
+  message += " г.\n       (";
   message += formatDateTime(baselineTimestamp_);
   message += ")\n";
-  message += "Пройшло: ";
-  message += formatElapsedSinceBaseline();
-  message += "\n";
-
-  message += "Поточна вага брутто: ";
+  message += "⌛️ Поточна вага брутто: ";
   message += String(last_weight_grams_, 2);
-  message += "\n";
+  message += " г. \n\n";
+
+  message += "⏱️ Пройшло: ";
+  message += formatElapsedSinceBaseline();
 
   outMessage = message;
   return true;
@@ -284,24 +298,27 @@ void Application::checkFilamentThresholdAlerts() {
   const float remaining = calculateRemainingFilamentGrams(last_weight_grams_);
 
   if (remaining <= config::kFilamentWarningThresholdGrams && !warning500_sent_) {
-    if (trySendThresholdAlert("⚠️ Увага! Закінчується філамент.", warning500_sent_)) {
+    if (trySendThresholdAlert("⚠️ Закінчується філамент.", warning500_sent_)) {
       Serial.println("warning 500g sent\n");
+      flash_store_.saveThresholdAlertSent(true, warning500_key_);
     } else {
       Serial.println("warning 500g send failed\n");
     }
   }
 
   if (remaining <= config::kFilamentCriticalThresholdGrams && !warning100_sent_) {
-    if (trySendThresholdAlert("⚠️ Увага! Закінчується філамент.", warning100_sent_)) {
+    if (trySendThresholdAlert("⚠️🔜 Закінчується філамент.", warning100_sent_)) {
       Serial.println("warning 100g sent\n");
+      flash_store_.saveThresholdAlertSent(true, warning100_key_);
     } else {
       Serial.println("warning 100g send failed\n");
     }
   }
 
   if (remaining <= config::kFilamentAlmostEmptyGrams && !warning10_sent_) {
-    if (trySendThresholdAlert("⚠️ Увага! Потрібна заміна філаменту.", warning10_sent_)) {
+    if (trySendThresholdAlert("⚠️🔄 Потрібна заміна філаменту.", warning10_sent_)) {
       Serial.println("warning 10g sent\n");
+      flash_store_.saveThresholdAlertSent(true, warning10_key_);
     } else {
       Serial.println("warning 10g send failed\n");
     }
@@ -332,7 +349,7 @@ bool Application::trySendThresholdAlert(const char* header, bool& sentFlag) {
 }
 
 float Application::calculateRemainingFilamentGrams(float currentGrossWeight) const {
-  return fabsf(baselineWeight_ - currentGrossWeight - config::kFilamentSpoolWeightGrams);
+  return -(baselineWeight_ - currentGrossWeight - config::kFilamentSpoolWeightGrams);
 }
 
 String Application::formatDateTime(int64_t epochSeconds) const {

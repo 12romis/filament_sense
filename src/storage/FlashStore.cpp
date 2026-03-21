@@ -51,4 +51,66 @@ bool FlashStore::loadBaselineTimestamp(int64_t& baselineTimestamp) {
   return true;
 }
 
+bool FlashStore::loadThresholdAlertSent(bool& thresholdAlertSent, const char* key) {
+  if (!initialized_) {
+    return false;
+  }
+
+  thresholdAlertSent = preferences_.getBool(key, false);
+  return true;
+}
+
+bool FlashStore::saveThresholdAlertSent(bool thresholdAlertSent, const char* key) {
+  if (!initialized_) {
+    return false;
+  }
+
+  const size_t written = preferences_.putBool(key, thresholdAlertSent);
+  return written == sizeof(bool);
+}
+
+bool FlashStore::savekHx711RawUnitsPerGram(float hx711RawUnitsPerGram) {
+  if (!initialized_) {
+    return false;
+  }
+
+  const size_t written = preferences_.putFloat(kHx711RawUnitsPerGramKey, hx711RawUnitsPerGram);
+  return written == sizeof(float);
+}
+
+bool FlashStore::loadkHx711RawUnitsPerGram(float& kHx711RawUnitsPerGram) {
+  if (!initialized_) {
+    return false;
+  }
+
+  if (!preferences_.isKey(kHx711RawUnitsPerGramKey)) {
+    return false;
+  }
+
+  kHx711RawUnitsPerGram = preferences_.getFloat(kHx711RawUnitsPerGramKey, 0.0F);
+  return true;
+}
+
+bool FlashStore::saveHx711TareOffset(long hx711TareOffset) {
+  if (!initialized_) {
+    return false;
+  }
+
+  const size_t written = preferences_.putLong(kHx711TareOffsetKey, hx711TareOffset);
+  return written == sizeof(long);
+}
+
+bool FlashStore::loadHx711TareOffset(long& hx711TareOffset) {
+  if (!initialized_) {
+    return false;
+  }
+
+  if (!preferences_.isKey(kHx711TareOffsetKey)) {
+    return false;
+  }
+
+  hx711TareOffset = preferences_.getLong(kHx711TareOffsetKey, 0L);
+  return true;
+}
+
 }  // namespace storage

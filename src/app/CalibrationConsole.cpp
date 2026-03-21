@@ -5,8 +5,9 @@
 
 namespace app {
 
-CalibrationConsole::CalibrationConsole(hal::ScaleManager& scale_manager)
-    : scale_manager_(scale_manager) {}
+CalibrationConsole::CalibrationConsole(hal::ScaleManager& scale_manager,
+                                       storage::FlashStore& flash_store)
+    : scale_manager_(scale_manager), flash_store_(flash_store) {}
 
 void CalibrationConsole::begin(Stream& serial) {
   serial_ = &serial;
@@ -69,8 +70,11 @@ void CalibrationConsole::handleCalibCommand(const char* args) {
 
     tare_raw_ = raw_sum;
     tare_ready_ = true;
+    flash_store_.saveHx711TareOffset(tare_raw_);
+
     serial_->print("calib tare_raw=");
     serial_->println(tare_raw_);
+    serial_->println("calib: This value saved to FlashStore and will be used on next boot.");
     return;
   }
 
@@ -110,10 +114,11 @@ void CalibrationConsole::handleCalibCommand(const char* args) {
 
     coefficient_ = candidate_coefficient;
     coefficient_ready_ = true;
+    flash_store_.savekHx711RawUnitsPerGram(coefficient_);
 
     serial_->print("calib kHx711RawUnitsPerGram=");
     serial_->println(coefficient_, 6);
-    serial_->println("calib: copy this value to HardwareConfig.h");
+    serial_->println("calib: This value saved to FlashStore and will be used on next boot.");
     return;
   }
 
