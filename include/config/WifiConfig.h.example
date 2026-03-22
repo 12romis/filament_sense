@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stdint.h>
+
 namespace config {
 
 // Copy to WifiConfig.h and fill with real values.
@@ -13,11 +15,31 @@ constexpr const char* kTelegramChatId = "YOUR_TELEGRAM_CHAT_ID";
 constexpr const char* kNtpPrimary = "pool.ntp.org";
 constexpr const char* kNtpSecondary = "time.google.com";
 
+// Bambu Lab P1S MQTT listener.
+constexpr bool kBambuMqttEnabled = true;
+constexpr const char* kBambuMqttHost = "192.168.0.103";
+constexpr uint16_t kBambuMqttPort = 8883;
+constexpr const char* kBambuMqttUsername = "bblp";
+constexpr const char* kBambuMqttPassword = "PRINTER_ACCESS_CODE";
+constexpr const char* kBambuMqttTopic = "device/PRINTER_SERIAL/report";
+constexpr const char* kBambuMqttClientIdPrefix = "filamentsense";
+
+// Optional PEM certificate for TLS verification when insecure mode is disabled.
+// Leave empty when FILAMENTSENSE_BAMBU_MQTT_INSECURE = 1.
+constexpr const char* kBambuMqttCaCert = "";
+
 }  // namespace config
 
-// Simulation/offline mode: no real Wi-Fi and no real HTTP requests are performed.
+// Simulation/offline mode: no real Wi-Fi, MQTT, NTP, or Telegram requests are performed.
 // 1 -> print reports to Serial only
-// 0 -> use real Wi-Fi + Telegram API
+// 0 -> use real Wi-Fi + Telegram API + Bambu MQTT listener
 #ifndef FILAMENTSENSE_OFFLINE_MODE
 #define FILAMENTSENSE_OFFLINE_MODE 0
+#endif
+
+// MQTT TLS mode for the printer broker.
+// 1 -> skip certificate validation (matches mosquitto_sub --insecure)
+// 0 -> require valid CA cert in kBambuMqttCaCert
+#ifndef FILAMENTSENSE_BAMBU_MQTT_INSECURE
+#define FILAMENTSENSE_BAMBU_MQTT_INSECURE 1
 #endif

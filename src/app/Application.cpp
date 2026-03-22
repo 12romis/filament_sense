@@ -16,6 +16,10 @@ constexpr char kWarning500Key[] = "warning500Sent";
 constexpr char kWarning100Key[] = "warning100Sent";
 constexpr char kWarning10Key[] = "warning10Sent";
 
+const char* SafeText(const char* value) {
+  return (value != nullptr && value[0] != '\0') ? value : "unknown";
+}
+
 }  // namespace
 
 Application::Application() : calibration_console_(scale_manager_, flash_store_) {}
@@ -27,6 +31,7 @@ void Application::setup() {
 
   flash_store_.begin();
   buttons_.begin(config::kButtonPins, config::kButtonCount);
+  bambu_mqtt_listener_.begin(Serial);
   calibration_console_.begin(Serial);
   service_.begin();
 
@@ -48,9 +53,15 @@ void Application::loop() {
   calibration_console_.poll(now);
   buttons_.poll(now);
   service_.tick(now);
+  bambu_mqtt_listener_.poll(now);
 
   if (!first_measurement_done_ || (now - last_measure_ms_) >= kWeightMeasureIntervalMs) {
     updateWeightMeasurement(now);
+  }
+
+  BambuPrintEvent print_event;
+  if (bambu_mqtt_listener_.consumeEvent(print_event)) {
+    handleBambuPrintEvent(print_event, now);
   }
 
   if (buttons_.consumePressed(0)) {
@@ -137,8 +148,37 @@ void Application::handleBaselineSave(const uint32_t nowMs) {
 void Application::handleManualReport(const uint32_t nowMs) {
   turnOnLed(nowMs);
   updateWeightMeasurement(nowMs);
+  sendMessageToSerialAndTelegram(BuildStatusMessage(makeStatusSnapshot()));
+}
 
-  const String message = BuildStatusMessage(makeStatusSnapshot());
+void Application::handleBambuPrintEvent(const BambuPrintEvent& event, const uint32_t nowMs) {
+  updateWeightMeasurement(nowMs);
+  sendMessageToSerialAndTelegram(buildPrintEventMessage(event));
+}
+
+String Application::buildPrintEventMessage(const BambuPrintEvent& event) const {
+  String message;
+  message.reserve(320);
+
+  if (event.type == BambuPrintEventType::PrintFinished) {
+    message += "✅ Друк завершився: ";
+    message += SafeText(event.file_name);
+  } else if (event.type == BambuPrintEventType::PrintStopped) {
+    message += "⛔ Друк зупинився: ";
+    message += SafeText(event.file_name);
+    message += "\nПричина: ";
+    message += SafeText(event.reason);
+  } else {
+    message += "ℹ️ Подія принтера: ";
+    message += SafeText(event.file_name);
+  }
+
+  message += '\n';
+  message += BuildStatusMessage(makeStatusSnapshot());
+  return message;
+}
+
+void Application::sendMessageToSerialAndTelegram(const String& message) {
   Serial.println(message);
   if (!network_service_.sendTelegramReport(message)) {
     Serial.println("telegram send failed");

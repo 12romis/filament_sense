@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 
+#include "app/BambuMqttListener.h"
 #include "app/CalibrationConsole.h"
 #include "app/NetworkService.h"
 #include "app/StatusReport.h"
@@ -24,6 +25,9 @@ class Application {
   void updateWeightMeasurement(uint32_t nowMs);
   void handleBaselineSave(uint32_t nowMs);
   void handleManualReport(uint32_t nowMs);
+  void handleBambuPrintEvent(const BambuPrintEvent& event, uint32_t nowMs);
+  String buildPrintEventMessage(const BambuPrintEvent& event) const;
+  void sendMessageToSerialAndTelegram(const String& message);
   void checkFilamentThresholdAlerts();
   void trySendThresholdAlert(const char* header, bool& sentFlag, const char* flashKey);
   StatusSnapshot makeStatusSnapshot() const;
@@ -31,6 +35,7 @@ class Application {
   void updateLed(uint32_t nowMs);
 
   hal::ScaleManager scale_manager_;
+  BambuMqttListener bambu_mqtt_listener_;
   CalibrationConsole calibration_console_;
   hal::ButtonInput buttons_;
   storage::FlashStore flash_store_;
