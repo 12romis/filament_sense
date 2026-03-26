@@ -53,7 +53,7 @@ void Application::loop() {
   calibration_console_.poll(now);
   buttons_.poll(now);
   service_.tick(now);
-  bambu_mqtt_listener_.poll(now);
+  // bambu_mqtt_listener_.poll(now);
 
   if (!first_measurement_done_ || (now - last_measure_ms_) >= kWeightMeasureIntervalMs) {
     updateWeightMeasurement(now);
@@ -192,19 +192,22 @@ void Application::checkFilamentThresholdAlerts() {
   }
 
   const float remainingGrams = CalculateRemainingFilamentGrams(snapshot);
+  Serial.print("Remaining filament: "); Serial.print(remainingGrams, 1); Serial.println(" g");
+  
   if (remainingGrams <= config::kFilamentWarningThresholdGrams) {
-    trySendThresholdAlert("⚠️ Увага! Закінчується філамент.", warning500_sent_, kWarning500Key);
+    trySendThresholdAlert("📉 Закінчується філамент (500 g).", warning500_sent_, kWarning500Key);
   }
   if (remainingGrams <= config::kFilamentCriticalThresholdGrams) {
-    trySendThresholdAlert("⚠️ Увага! Закінчується філамент.", warning100_sent_, kWarning100Key);
+    trySendThresholdAlert("⚠️ Закінчується філамент (100 g).", warning100_sent_, kWarning100Key);
   }
   if (remainingGrams <= config::kFilamentAlmostEmptyGrams) {
-    trySendThresholdAlert("🚨 Критично мало філаменту.", warning10_sent_, kWarning10Key);
+    trySendThresholdAlert("🚨 Критично мало філаменту (10 g).", warning10_sent_, kWarning10Key);
   }
 }
 
 void Application::trySendThresholdAlert(const char* header, bool& sentFlag, const char* flashKey) {
   if (sentFlag) {
+    Serial.print("Threshold alert already sent for "); Serial.println(header);
     return;
   }
 

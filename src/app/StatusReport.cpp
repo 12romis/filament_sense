@@ -60,7 +60,7 @@ String BuildStatusMessage(const StatusSnapshot& snapshot) {
   message += "⚖️ Філаменту залишилось: ";
   if (snapshot.hasBaselineWeight && snapshot.hasCurrentGrossWeight) {
     message += String(CalculateRemainingFilamentGrams(snapshot), 1);
-    message += " g";
+    message += " g\n";
   } else {
     message += "n/a";
   }
@@ -68,7 +68,7 @@ String BuildStatusMessage(const StatusSnapshot& snapshot) {
   message += "\n📦 Початкова вага брутто: ";
   if (snapshot.hasBaselineWeight) {
     message += String(snapshot.baselineWeightGrams, 1);
-    message += " g";
+    message += " g\n        ";
   } else {
     message += "n/a";
   }
@@ -84,7 +84,7 @@ String BuildStatusMessage(const StatusSnapshot& snapshot) {
     message += "n/a";
   }
 
-  message += "\n⏱️ Пройшло: ";
+  message += "\n\n⏱️ Пройшло: ";
   message += FormatElapsed(snapshot);
 
   return message;
