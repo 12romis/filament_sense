@@ -2,3 +2,4 @@
 .vscode/
 include/config/WifiConfig.h
 .venv/
+tmp.txt

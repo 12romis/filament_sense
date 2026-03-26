@@ -53,7 +53,7 @@ void Application::loop() {
   calibration_console_.poll(now);
   buttons_.poll(now);
   service_.tick(now);
-  // bambu_mqtt_listener_.poll(now);
+  bambu_mqtt_listener_.poll(now);
 
   if (!first_measurement_done_ || (now - last_measure_ms_) >= kWeightMeasureIntervalMs) {
     updateWeightMeasurement(now);
@@ -193,7 +193,7 @@ void Application::checkFilamentThresholdAlerts() {
 
   const float remainingGrams = CalculateRemainingFilamentGrams(snapshot);
   Serial.print("Remaining filament: "); Serial.print(remainingGrams, 1); Serial.println(" g");
-  
+
   if (remainingGrams <= config::kFilamentWarningThresholdGrams) {
     trySendThresholdAlert("📉 Закінчується філамент (500 g).", warning500_sent_, kWarning500Key);
   }

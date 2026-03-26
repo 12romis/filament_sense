@@ -134,7 +134,25 @@ void CalibrationConsole::handleCalibCommand(const char* args) {
     return;
   }
 
-  serial_->println("calib: usage tare|known <grams>|show");
+  if (strncmp(args, "setbase ", 8) == 0) {
+    char* end_ptr = nullptr;
+    const float baseline_grams = strtof(args + 8, &end_ptr);
+    while (end_ptr != nullptr && *end_ptr == ' ') {
+      ++end_ptr;
+    }
+    if (end_ptr == args + 8 || (end_ptr != nullptr && *end_ptr != '\0') || baseline_grams <= 0.0F) {
+      serial_->println("calib: usage 'calib setbase <grams>'");
+      return;
+    }
+    flash_store_.saveBaselineWeight(baseline_grams);
+    serial_->print("calib baselineWeight=");
+    serial_->println(baseline_grams, 6);
+
+    serial_->println("calib: New baseline weight saved to FlashStore and will be used on next boot.");
+    return;
+  }
+  
+  serial_->println("calib: usage tare|known <grams>|show|setbase <grams>");
 }
 
 void CalibrationConsole::printHelp() {
@@ -142,6 +160,7 @@ void CalibrationConsole::printHelp() {
   serial_->println("  calib tare");
   serial_->println("  calib known <grams>");
   serial_->println("  calib show");
+  serial_->println("  calib setbase <grams>");
 }
 
 }  // namespace app

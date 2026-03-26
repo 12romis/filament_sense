@@ -25,6 +25,8 @@ class BambuMqttListener {
   void begin(Stream& serial);
   void poll(uint32_t now_ms);
   bool consumeEvent(BambuPrintEvent& out_event);
+  void debugTestPayload();
+  void debugTestPayloadRunning();
 
  private:
   static void handleMessageThunk(char* topic, uint8_t* payload, unsigned int length);

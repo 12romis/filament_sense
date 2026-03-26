@@ -9,6 +9,8 @@ namespace app {
 namespace {
 
 constexpr uint32_t kReconnectIntervalMs = 5000;
+constexpr uint32_t kOfflineReconnectIntervalMs = 60000;
+constexpr uint8_t kOfflineAfterFailedAttempts = 3;
 constexpr size_t kMqttBufferSize = 6144;
 
 bool IsOfflineMode() {
@@ -135,12 +137,17 @@ void BambuMqttListener::handleMessage(const char* topic,
     return;
   }
 
-  const char* gcode_file = print["gcode_file"] | nullptr;
-  const char* subtask_name = print["subtask_name"] | nullptr;
+  JsonVariantConst gcode_file_var = print["gcode_file"];
+  JsonVariantConst subtask_name_var = print["subtask_name"];
+  JsonVariantConst gcode_state_var = print["gcode_state"];
+
+  const char* gcode_file = gcode_file_var.is<const char*>() ? gcode_file_var.as<const char*>() : nullptr;
+  const char* subtask_name = subtask_name_var.is<const char*>() ? subtask_name_var.as<const char*>() : nullptr;
+  const char* gcode_state = gcode_state_var.is<const char*>() ? gcode_state_var.as<const char*>() : nullptr;
+
   const char* file_name = FallbackFileName(gcode_file, subtask_name, last_file_name_);
   rememberFileName(file_name);
 
-  const char* gcode_state = print["gcode_state"] | nullptr;
   if (gcode_state == nullptr || gcode_state[0] == '\0') {
     return;
   }
@@ -171,14 +178,26 @@ void BambuMqttListener::handleMessage(const char* topic,
 }
 
 void BambuMqttListener::ensureConnection(const uint32_t now_ms) {
+  static uint8_t consecutive_failures = 0;
+  static bool printer_offline = false;
+
   if (mqtt_client_.connected()) {
+    consecutive_failures = 0;
+    printer_offline = false;
     return;
   }
 
-  if ((now_ms - last_connect_attempt_ms_) < kReconnectIntervalMs) {
+  const uint32_t reconnect_interval_ms =
+      printer_offline ? kOfflineReconnectIntervalMs : kReconnectIntervalMs;
+
+  if ((now_ms - last_connect_attempt_ms_) < reconnect_interval_ms) {
     return;
   }
   last_connect_attempt_ms_ = now_ms;
+
+  // На випадок битого/висячого сокета після попередньої невдалої спроби.
+  mqtt_client_.disconnect();
+  secure_client_.stop();
 
   configureTls();
 
@@ -190,9 +209,22 @@ void BambuMqttListener::ensureConnection(const uint32_t now_ms) {
                                               config::kBambuMqttUsername,
                                               config::kBambuMqttPassword);
   if (!connected) {
+    ++consecutive_failures;
+
+    if (consecutive_failures >= kOfflineAfterFailedAttempts) {
+      if (!printer_offline && serial_ != nullptr) {
+        serial_->println("bambu mqtt printer marked offline");
+      }
+      printer_offline = true;
+    }
+
     if (serial_ != nullptr) {
       serial_->print("bambu mqtt connect failed rc=");
-      serial_->println(mqtt_client_.state());
+      serial_->print(mqtt_client_.state());
+      serial_->print(", failures=");
+      serial_->print(consecutive_failures);
+      serial_->print(", offline=");
+      serial_->println(printer_offline ? "true" : "false");
     }
     return;
   }
@@ -201,9 +233,19 @@ void BambuMqttListener::ensureConnection(const uint32_t now_ms) {
     if (serial_ != nullptr) {
       serial_->println("bambu mqtt subscribe failed");
     }
+
     mqtt_client_.disconnect();
+    secure_client_.stop();
+
+    ++consecutive_failures;
+    if (consecutive_failures >= kOfflineAfterFailedAttempts) {
+      printer_offline = true;
+    }
     return;
   }
+
+  consecutive_failures = 0;
+  printer_offline = false;
 
   if (serial_ != nullptr) {
     serial_->println("bambu mqtt connected");

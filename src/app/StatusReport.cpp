@@ -62,7 +62,7 @@ String BuildStatusMessage(const StatusSnapshot& snapshot) {
     message += String(CalculateRemainingFilamentGrams(snapshot), 1);
     message += " g\n";
   } else {
-    message += "n/a";
+    message += "n/a\n";
   }
 
   message += "\n📦 Початкова вага брутто: ";
