@@ -40,6 +40,7 @@ void Application::setup() {
 
   network_service_.connectWifi();
   network_service_.syncClock();
+  ble_service_.begin();
   updateWeightMeasurement(0);
 }
 
@@ -53,6 +54,7 @@ void Application::loop() {
   calibration_console_.poll(now);
   buttons_.poll(now);
   service_.tick(now);
+  ble_service_.tick(now);
   bambu_mqtt_listener_.poll(now);
 
   if (!first_measurement_done_ || (now - last_measure_ms_) >= kWeightMeasureIntervalMs) {
@@ -245,16 +247,17 @@ void Application::turnOnLed(const uint32_t nowMs) {
 }
 
 void Application::updateLed(const uint32_t nowMs) {
-  if (!led_active_) {
+  if (led_active_) {
+    if ((nowMs - led_toggle_time_) < kLedPulseDurationMs) {
+      return;
+    }
+
+    led_active_ = false;
+    digitalWrite(LED_PIN, ble_service_.isConnected() ? HIGH : LOW);
     return;
   }
 
-  if ((nowMs - led_toggle_time_) < kLedPulseDurationMs) {
-    return;
-  }
-
-  digitalWrite(LED_PIN, LOW);
-  led_active_ = false;
+  digitalWrite(LED_PIN, ble_service_.isConnected() ? HIGH : LOW);
 }
 
 }  // namespace app

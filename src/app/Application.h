@@ -6,6 +6,7 @@
 #include "app/CalibrationConsole.h"
 #include "app/NetworkService.h"
 #include "app/StatusReport.h"
+#include "ble/BleService.h"
 #include "domain/FilamentSenseService.h"
 #include "hal/buttons/ButtonInput.h"
 #include "hal/scale/ScaleManager.h"
@@ -41,6 +42,7 @@ class Application {
   storage::FlashStore flash_store_;
   domain::FilamentSenseService service_;
   NetworkService network_service_;
+  ble::BleService ble_service_;
 
   uint32_t last_tick_ms_ = 0;
   uint32_t last_measure_ms_ = 0;
