@@ -29,10 +29,6 @@ bool UseInsecureMqttTls() {
 #endif
 }
 
-bool IsBambuMqttConfigured() {
-  return config::kBambuMqttEnabled && strlen(config::kBambuMqttHost) > 0 &&
-         config::kBambuMqttPort > 0 && strlen(config::kBambuMqttTopic) > 0;
-}
 
 void SafeCopy(char* dst, size_t dst_size, const char* src) {
   if (dst_size == 0) {
@@ -67,16 +63,35 @@ BambuMqttListener* BambuMqttListener::instance_ = nullptr;
 
 BambuMqttListener::BambuMqttListener() : mqtt_client_(secure_client_) {}
 
-void BambuMqttListener::begin(Stream& serial) {
+void BambuMqttListener::begin(Stream& serial, const char* host) {
   serial_ = &serial;
-  mqtt_client_.setServer(config::kBambuMqttHost, config::kBambuMqttPort);
+  strncpy(host_, host, sizeof(host_) - 1);
+  host_[sizeof(host_) - 1] = '\0';
+  mqtt_client_.setServer(host_, config::kBambuMqttPort);
   mqtt_client_.setBufferSize(kMqttBufferSize);
   mqtt_client_.setCallback(handleMessageThunk);
   instance_ = this;
 }
 
+void BambuMqttListener::reconfigureHost(const char* host) {
+  if (host == nullptr || host[0] == '\0' || strcmp(host, host_) == 0) {
+    if (serial_) serial_->println("[mqtt] host unchanged");
+    return;
+  }
+  strncpy(host_, host, sizeof(host_) - 1);
+  host_[sizeof(host_) - 1] = '\0';
+  if (serial_) {
+    serial_->print("[mqtt] host changed -> ");
+    serial_->println(host_);
+    serial_->println("[mqtt] reconnecting");
+  }
+  mqtt_client_.disconnect();
+  secure_client_.stop();
+  mqtt_client_.setServer(host_, config::kBambuMqttPort);
+}
+
 void BambuMqttListener::poll(const uint32_t now_ms) {
-  if (IsOfflineMode() || !IsBambuMqttConfigured()) {
+  if (IsOfflineMode() || !isBambuMqttConfigured()) {
     return;
   }
 
@@ -308,6 +323,11 @@ void BambuMqttListener::buildStopReason(char* out_reason,
   }
 
   snprintf(out_reason, out_size, "state=%s", state != nullptr ? state : "unknown");
+}
+
+bool BambuMqttListener::isBambuMqttConfigured() const {
+  return config::kBambuMqttEnabled && host_[0] != '\0' &&
+         config::kBambuMqttPort > 0 && strlen(config::kBambuMqttTopic) > 0;
 }
 
 }  // namespace app

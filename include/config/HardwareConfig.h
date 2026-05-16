@@ -14,8 +14,8 @@ constexpr hal::Hx711PinConfig kScaleHx711 = {4, 3};  // config.dout_pin, config.
 // constexpr float kHx711RawUnitsPerGram = 24.635632F;  // HX711 raw units per gram. Calibrate this on real hardware.
 // constexpr long kHx711RawOffset = -87268;  // HX711 raw value at zero load. Calibrate this on real hardware.
 
-// Default filament spool nominal weight (grams). User requested default: 3 kg.
-constexpr float kFilamentSpoolWeightGrams = 3000.0F;
+// Initial filament weight on a full spool (grams). Used as baseline for remaining calc.
+constexpr float kInitialFilamentWeightGrams = 3000.0F;
 
 // Remaining filament warning thresholds (grams).
 constexpr float kFilamentWarningThresholdGrams = 500.0F;

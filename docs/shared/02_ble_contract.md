@@ -28,7 +28,7 @@
 
 | Ім'я | UUID | Properties | Розмір | Опис |
 |---|---|---|---|---|
-| Spool Data | `beb5483e-36e1-4688-b7f5-ea07361b26a0` | READ, NOTIFY | 9 байт | Дані єдиного слоту ваги |
+| Spool Data | `beb5483e-36e1-4688-b7f5-ea07361b26a0` | READ, NOTIFY | 21 байт | remaining/gross/baseline/timestamp/hasFilament |
 | Env Data | `beb5483e-36e1-4688-b7f5-ea07361b26b0` | READ, NOTIFY | 12 байт | Температура/вологість/тиск (поки не використовується) |
 | Cmd | `beb5483e-36e1-4688-b7f5-ea07361b26b2` | WRITE, WRITE_NR | до ~200 байт | JSON-команди від Android |
 | Config | `beb5483e-36e1-4688-b7f5-ea07361b26b3` | READ, WRITE | TODO | Поки не використовується; зарезервовано |
@@ -43,24 +43,28 @@
 
 ## Формати payload
 
-### Spool Data (9 байт)
+### Spool Data (21 байт)
 | Offset | Розмір | Тип | Поле | Опис |
 |---|---|---|---|---|
-| 0 | 4 | float LE | `remainingGrams` | Залишок філаменту, г |
-| 4 | 4 | float LE | `grossWeightGrams` | Поточна вага брутто (raw з HX711 після калібровки), г |
-| 8 | 1 | uint8 | `hasFilament` | 0 = немає, 1 = є |
+| 0 | 4 | float LE | `remainingGrams` | Залишок філаменту, г (NaN = невідомо) |
+| 4 | 4 | float LE | `grossWeightGrams` | Поточна вага брутто, г (NaN = невідомо) |
+| 8 | 4 | float LE | `baselineWeight` | Базова вага брутто, г (NaN = не встановлено) |
+| 12 | 8 | int64 LE | `baselineTimestamp` | Unix epoch секунди; 0 = не встановлено |
+| 20 | 1 | uint8 | `hasFilament` | 0 = немає, 1 = є |
 
 **ESP32 (запис):**
 ```cpp
-uint8_t buf[9];
-memcpy(buf + 0, &remaining_g, 4);
-memcpy(buf + 4, &gross_g, 4);
-buf[8] = has_filament ? 1 : 0;
+uint8_t buf[21];
+memcpy(buf + 0, &p.remainingGrams, 4);
+memcpy(buf + 4, &p.grossWeightGrams, 4);
+memcpy(buf + 8, &p.baselineWeight, 4);
+memcpy(buf + 12, &p.baselineTimestamp, 8);
+buf[20] = p.hasFilament ? 1 : 0;
 spool_data_char_->setValue(buf, sizeof(buf));
 spool_data_char_->notify();
 ```
 
-**Android (читання):** уже реалізовано коректно в `BleDataParser.parseSpoolData()`. Тільки прибрати індексацію по списку — використовувати один UUID.
+**Android (читання):** оновити `BleDataParser.parseSpoolData()` під новий формат 21 байт.
 
 ### Env Data (12 байт)
 | Offset | Розмір | Тип | Поле |

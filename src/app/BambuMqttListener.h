@@ -22,7 +22,8 @@ class BambuMqttListener {
  public:
   BambuMqttListener();
 
-  void begin(Stream& serial);
+  void begin(Stream& serial, const char* host);
+  void reconfigureHost(const char* host);
   void poll(uint32_t now_ms);
   bool consumeEvent(BambuPrintEvent& out_event);
   void debugTestPayload();
@@ -39,8 +40,10 @@ class BambuMqttListener {
   bool isFinishedState(const char* state) const;
   bool isStoppedState(const char* state) const;
   void buildStopReason(char* out_reason, size_t out_size, const char* state, int print_error) const;
+  bool isBambuMqttConfigured() const;
 
   Stream* serial_ = nullptr;
+  char host_[64] = {0};
   WiFiClientSecure secure_client_;
   PubSubClient mqtt_client_;
   uint32_t last_connect_attempt_ms_ = 0;

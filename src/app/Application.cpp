@@ -1,8 +1,12 @@
 #include "app/Application.h"
 
+#include <ArduinoJson.h>
+#include <cmath>
+#include <limits>
 #include <time.h>
 
 #include "config/HardwareConfig.h"
+#include "config/WifiConfig.h"
 
 namespace app {
 namespace {
@@ -31,16 +35,20 @@ void Application::setup() {
 
   flash_store_.begin();
   buttons_.begin(config::kButtonPins, config::kButtonCount);
-  bambu_mqtt_listener_.begin(Serial);
   calibration_console_.begin(Serial);
   service_.begin();
 
   loadPersistedState();
+  bambu_mqtt_listener_.begin(Serial, active_mqtt_host_);
   scale_manager_.begin(config::kScaleHx711, kHx711RawUnitsPerGram_, hx711TareOffset_);
 
   network_service_.connectWifi();
   network_service_.syncClock();
   ble_service_.begin();
+  ble_service_.setOnSaveBaseline([this] { handleBaselineSave(millis()); });
+  ble_service_.setOnManualReport([this] { handleManualReport(millis()); });
+  ble_service_.setOnConfigUpdate([this](const char* j) { handleConfigUpdate(j); });
+  ble_service_.publishConfig(currentConfigJson().c_str());
   updateWeightMeasurement(0);
 }
 
@@ -90,6 +98,14 @@ void Application::loadPersistedState() {
   if (!flash_store_.loadHx711TareOffset(hx711TareOffset_)) {
     hx711TareOffset_ = 0;
   }
+
+  char hostBuf[64] = {0};
+  if (flash_store_.loadBambuMqttHost(hostBuf, sizeof(hostBuf)) && hostBuf[0]) {
+    strncpy(active_mqtt_host_, hostBuf, sizeof(active_mqtt_host_));
+  } else {
+    strncpy(active_mqtt_host_, config::kBambuMqttHost, sizeof(active_mqtt_host_));
+  }
+  active_mqtt_host_[sizeof(active_mqtt_host_) - 1] = '\0';
 }
 
 void Application::updateWeightMeasurement(const uint32_t nowMs) {
@@ -104,6 +120,7 @@ void Application::updateWeightMeasurement(const uint32_t nowMs) {
   first_measurement_done_ = true;
 
   checkFilamentThresholdAlerts();
+  publishBleSpool();
 }
 
 void Application::handleBaselineSave(const uint32_t nowMs) {
@@ -141,6 +158,7 @@ void Application::handleBaselineSave(const uint32_t nowMs) {
     Serial.print("baselineWeight saved=");
     Serial.print(baselineWeight_, 1);
     Serial.println(" g");
+    publishBleSpool();
     return;
   }
 
@@ -236,8 +254,50 @@ StatusSnapshot Application::makeStatusSnapshot() const {
   snapshot.hasBaselineTimestamp = hasBaselineTimestamp_;
   snapshot.baselineTimestamp = baselineTimestamp_;
   snapshot.currentTimestamp = static_cast<int64_t>(time(nullptr));
-  snapshot.filamentSpoolWeightGrams = config::kFilamentSpoolWeightGrams;
+  snapshot.filamentSpoolWeightGrams = config::kInitialFilamentWeightGrams;
   return snapshot;
+}
+
+void Application::publishBleSpool() {
+  const StatusSnapshot snap = makeStatusSnapshot();
+  ble::SpoolPayload p;
+  if (snap.hasBaselineWeight && snap.hasCurrentGrossWeight) {
+    const float remaining = CalculateRemainingFilamentGrams(snap);
+    p.remainingGrams = remaining;
+    p.hasFilament = !std::isnan(remaining) && remaining > 0.0F;
+  }
+  p.grossWeightGrams = snap.hasCurrentGrossWeight
+      ? snap.currentGrossWeightGrams
+      : std::numeric_limits<float>::quiet_NaN();
+  p.baselineWeight = snap.hasBaselineWeight
+      ? snap.baselineWeightGrams
+      : std::numeric_limits<float>::quiet_NaN();
+  p.baselineTimestamp = snap.hasBaselineTimestamp ? snap.baselineTimestamp : 0;
+  ble_service_.publishSpoolData(p);
+}
+
+void Application::handleConfigUpdate(const char* json) {
+  JsonDocument doc;
+  if (deserializeJson(doc, json)) {
+    Serial.println("[ble] config invalid");
+    return;
+  }
+  const char* newHost = doc["mqtt_host"];
+  if (!newHost || !newHost[0] || strcmp(newHost, active_mqtt_host_) == 0) return;
+  strncpy(active_mqtt_host_, newHost, sizeof(active_mqtt_host_));
+  active_mqtt_host_[sizeof(active_mqtt_host_) - 1] = '\0';
+  flash_store_.saveBambuMqttHost(active_mqtt_host_);
+  bambu_mqtt_listener_.reconfigureHost(active_mqtt_host_);
+  ble_service_.publishConfig(currentConfigJson().c_str());
+}
+
+String Application::currentConfigJson() const {
+  String json;
+  json.reserve(80);
+  json = "{\"mqtt_host\":\"";
+  json += active_mqtt_host_;
+  json += "\"}";
+  return json;
 }
 
 void Application::turnOnLed(const uint32_t nowMs) {

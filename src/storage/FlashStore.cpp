@@ -113,4 +113,20 @@ bool FlashStore::loadHx711TareOffset(long& hx711TareOffset) {
   return true;
 }
 
+bool FlashStore::saveBambuMqttHost(const char* host) {
+  if (!initialized_) return false;
+  const size_t written = preferences_.putString(kMqttHostKey, host);
+  return written > 0;
+}
+
+bool FlashStore::loadBambuMqttHost(char* outBuf, size_t bufSize) {
+  if (!initialized_) return false;
+  if (!preferences_.isKey(kMqttHostKey)) return false;
+  const String val = preferences_.getString(kMqttHostKey, "");
+  if (val.length() == 0) return false;
+  strncpy(outBuf, val.c_str(), bufSize - 1);
+  outBuf[bufSize - 1] = '\0';
+  return true;
+}
+
 }  // namespace storage

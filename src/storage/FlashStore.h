@@ -18,6 +18,8 @@ class FlashStore {
   bool loadkHx711RawUnitsPerGram(float& kHx711RawUnitsPerGram);
   bool saveHx711TareOffset(long hx711TareOffset);
   bool loadHx711TareOffset(long& hx711TareOffset);
+  bool saveBambuMqttHost(const char* host);
+  bool loadBambuMqttHost(char* outBuf, size_t bufSize);
 
  private:
   static constexpr const char* kNamespace = "filamentsense";
@@ -25,6 +27,7 @@ class FlashStore {
   static constexpr const char* kBaselineTimeKey = "baselineTime";
   static constexpr const char* kHx711RawUnitsPerGramKey = "UnitsPerGram";
   static constexpr const char* kHx711TareOffsetKey = "hx711TareOffset";
+  static constexpr const char* kMqttHostKey = "mqttHost";
 
   Preferences preferences_;
   bool initialized_ = false;

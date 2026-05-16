@@ -27,11 +27,14 @@ class Application {
   void handleBaselineSave(uint32_t nowMs);
   void handleManualReport(uint32_t nowMs);
   void handleBambuPrintEvent(const BambuPrintEvent& event, uint32_t nowMs);
+  void handleConfigUpdate(const char* json);
   String buildPrintEventMessage(const BambuPrintEvent& event) const;
+  String currentConfigJson() const;
   void sendMessageToSerialAndTelegram(const String& message);
   void checkFilamentThresholdAlerts();
   void trySendThresholdAlert(const char* header, bool& sentFlag, const char* flashKey);
   StatusSnapshot makeStatusSnapshot() const;
+  void publishBleSpool();
   void turnOnLed(uint32_t nowMs);
   void updateLed(uint32_t nowMs);
 
@@ -43,6 +46,8 @@ class Application {
   domain::FilamentSenseService service_;
   NetworkService network_service_;
   ble::BleService ble_service_;
+
+  char active_mqtt_host_[64] = {0};
 
   uint32_t last_tick_ms_ = 0;
   uint32_t last_measure_ms_ = 0;
