@@ -8,7 +8,8 @@
 namespace ble {
 namespace {
 
-constexpr uint16_t kAdvertisingIntervalUnitsPerMs = 1600 / 1000;
+// BLE advertising units = 0.625 ms each → units = ms * 8 / 5
+constexpr uint16_t advMsToUnits(uint16_t ms) { return static_cast<uint16_t>(ms * 8u / 5u); }
 
 class ServerCallbacks : public NimBLEServerCallbacks {
  public:
@@ -86,14 +87,21 @@ class ConfigCallbacks : public NimBLECharacteristicCallbacks {
 }  // namespace
 
 void BleService::begin() {
+  Serial.println("[ble] init...");
   NimBLEDevice::init(config::kBleDeviceName);
   NimBLEDevice::setPower(ESP_PWR_LVL_P9);
+  Serial.print("[ble] MAC: ");
+  Serial.println(NimBLEDevice::getAddress().toString().c_str());
 
   initServer();
   initService();
+  service_->start();
+  Serial.println("[ble] service started");
   startAdvertising();
 
-  Serial.println("[ble] started, advertising as 'FilamentSense'");
+  Serial.print("[ble] advertising as '");
+  Serial.print(config::kBleDeviceName);
+  Serial.println("'");
 }
 
 void BleService::tick(uint32_t nowMs) {
@@ -151,8 +159,7 @@ void BleService::initService() {
 
 void BleService::startAdvertising() {
   NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
-  const uint16_t adv_interval_units =
-      static_cast<uint16_t>(config::kBleAdvIntervalMs * kAdvertisingIntervalUnitsPerMs);
+  const uint16_t adv_interval_units = advMsToUnits(config::kBleAdvIntervalMs);
 
   advertising->addServiceUUID(config::kServiceUUID);
   advertising->setName(config::kBleDeviceName);
@@ -162,6 +169,10 @@ void BleService::startAdvertising() {
   advertising->setMaxInterval(adv_interval_units);
 
   NimBLEDevice::startAdvertising();
+  Serial.print("[ble] advertising interval=");
+  Serial.print(config::kBleAdvIntervalMs);
+  Serial.print("ms  uuid=");
+  Serial.println(config::kServiceUUID);
 }
 
 void BleService::publishSpoolData(const SpoolPayload& p) {
