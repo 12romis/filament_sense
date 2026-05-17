@@ -129,4 +129,16 @@ bool FlashStore::loadBambuMqttHost(char* outBuf, size_t bufSize) {
   return true;
 }
 
+bool FlashStore::saveNominalWeight(int nominalGrams) {
+  if (!initialized_) return false;
+  return preferences_.putInt(kNominalWeightKey, nominalGrams) == sizeof(int);
+}
+
+bool FlashStore::loadNominalWeight(int& nominalGrams) {
+  if (!initialized_) return false;
+  if (!preferences_.isKey(kNominalWeightKey)) return false;
+  nominalGrams = preferences_.getInt(kNominalWeightKey, 0);
+  return nominalGrams > 0;
+}
+
 }  // namespace storage

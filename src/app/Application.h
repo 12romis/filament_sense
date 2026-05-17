@@ -1,6 +1,8 @@
 #pragma once
 
 #include <Arduino.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
 
 #include "app/BambuMqttListener.h"
 #include "app/CalibrationConsole.h"
@@ -25,6 +27,7 @@ class Application {
   void loadPersistedState();
   void updateWeightMeasurement(uint32_t nowMs);
   void handleBaselineSave(uint32_t nowMs);
+  void handleSetTare(float value, int nominal, uint32_t nowMs);
   void handleManualReport(uint32_t nowMs);
   void handleBambuPrintEvent(const BambuPrintEvent& event, uint32_t nowMs);
   void handleConfigUpdate(const char* json);
@@ -55,6 +58,7 @@ class Application {
   bool has_last_weight_ = false;
   float last_weight_grams_ = 0.0F;
 
+  float nominalWeightGrams_ = 3000.0F;
   float baselineWeight_ = 0.0F;
   bool hasBaselineWeight_ = false;
   int64_t baselineTimestamp_ = 0;
@@ -69,6 +73,13 @@ class Application {
 
   bool led_active_ = false;
   uint32_t led_toggle_time_ = 0;
+
+  struct BleCmd {
+    enum class Type : uint8_t { kManualReport, kSaveBaseline, kSetTare } type;
+    float tare_value{0.0f};
+    int tare_nominal{0};
+  };
+  QueueHandle_t ble_cmd_queue_{nullptr};
 };
 
 }  // namespace app

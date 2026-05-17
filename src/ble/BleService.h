@@ -35,6 +35,7 @@ class BleService {
 
   void setOnSaveBaseline(std::function<void()> cb) { on_save_baseline_ = std::move(cb); }
   void setOnManualReport(std::function<void()> cb) { on_manual_report_ = std::move(cb); }
+  void setOnSetTare(std::function<void(float value, int nominal)> cb) { on_set_tare_ = std::move(cb); }
   void setOnConfigUpdate(std::function<void(const char*)> cb) { on_config_update_ = std::move(cb); }
 
  private:
@@ -53,6 +54,7 @@ class BleService {
 
   std::function<void()> on_save_baseline_;
   std::function<void()> on_manual_report_;
+  std::function<void(float, int)> on_set_tare_;
   std::function<void(const char*)> on_config_update_;
 };
 

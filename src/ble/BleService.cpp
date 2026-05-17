@@ -40,34 +40,50 @@ class ServerCallbacks : public NimBLEServerCallbacks {
 class CmdCallbacks : public NimBLECharacteristicCallbacks {
  public:
   explicit CmdCallbacks(std::function<void()> onSaveBaseline,
-                        std::function<void()> onManualReport)
+                        std::function<void()> onManualReport,
+                        std::function<void(float, int)> onSetTare)
       : on_save_baseline_(std::move(onSaveBaseline)),
-        on_manual_report_(std::move(onManualReport)) {}
+        on_manual_report_(std::move(onManualReport)),
+        on_set_tare_(std::move(onSetTare)) {}
 
   void onWrite(NimBLECharacteristic* chr, NimBLEConnInfo& info) override {
     (void)info;
+    const std::string& raw = chr->getValue();
+    Serial.print("[ble] cmd raw len="); Serial.print(raw.size());
+    Serial.print(" data="); Serial.println(raw.c_str());
     JsonDocument doc;
-    if (deserializeJson(doc, chr->getValue().c_str())) {
+    if (deserializeJson(doc, raw.c_str())) {
       Serial.println("[ble] cmd invalid json");
       return;
     }
     const char* cmd = doc["cmd"];
     if (!cmd) {
-      Serial.println("[ble] unknown cmd");
+      Serial.println("[ble] cmd missing");
       return;
     }
+    Serial.print("[ble] cmd="); Serial.println(cmd);
     if (strcmp(cmd, "save_baseline") == 0) {
+      Serial.print("[ble] save_baseline cb="); Serial.println(on_save_baseline_ ? "set" : "null");
       if (on_save_baseline_) on_save_baseline_();
     } else if (strcmp(cmd, "manual_report") == 0) {
+      Serial.print("[ble] manual_report cb="); Serial.println(on_manual_report_ ? "set" : "null");
       if (on_manual_report_) on_manual_report_();
+    } else if (strcmp(cmd, "set_tare") == 0) {
+      const float value = doc["value"] | 0.0f;
+      const int nominal = doc["nominal"] | 0;
+      Serial.print("[ble] set_tare cb="); Serial.println(on_set_tare_ ? "set" : "null");
+      Serial.print("[ble] set_tare value="); Serial.print(value, 1);
+      Serial.print(" nominal="); Serial.println(nominal);
+      if (on_set_tare_) on_set_tare_(value, nominal);
     } else {
-      Serial.println("[ble] unknown cmd");
+      Serial.print("[ble] unknown cmd: "); Serial.println(cmd);
     }
   }
 
  private:
   std::function<void()> on_save_baseline_;
   std::function<void()> on_manual_report_;
+  std::function<void(float, int)> on_set_tare_;
 };
 
 class ConfigCallbacks : public NimBLECharacteristicCallbacks {
@@ -89,6 +105,7 @@ class ConfigCallbacks : public NimBLECharacteristicCallbacks {
 void BleService::begin() {
   Serial.println("[ble] init...");
   NimBLEDevice::init(config::kBleDeviceName);
+  NimBLEDevice::setMTU(512);
   NimBLEDevice::setPower(ESP_PWR_LVL_P9);
   Serial.print("[ble] MAC: ");
   Serial.println(NimBLEDevice::getAddress().toString().c_str());
@@ -138,12 +155,14 @@ void BleService::initService() {
 
   auto* on_save = &on_save_baseline_;
   auto* on_manual = &on_manual_report_;
+  auto* on_tare = &on_set_tare_;
   cmd_char_ = service_->createCharacteristic(
       config::kCmdUUID,
       NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
   cmd_char_->setCallbacks(new CmdCallbacks(
       [on_save]() { if (*on_save) (*on_save)(); },
-      [on_manual]() { if (*on_manual) (*on_manual)(); }));
+      [on_manual]() { if (*on_manual) (*on_manual)(); },
+      [on_tare](float v, int n) { if (*on_tare) (*on_tare)(v, n); }));
 
   auto* on_config = &on_config_update_;
   config_char_ = service_->createCharacteristic(

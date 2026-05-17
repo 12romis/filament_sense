@@ -45,8 +45,20 @@ void Application::setup() {
   network_service_.connectWifi();
   network_service_.syncClock();
   ble_service_.begin();
-  ble_service_.setOnSaveBaseline([this] { handleBaselineSave(millis()); });
-  ble_service_.setOnManualReport([this] { handleManualReport(millis()); });
+
+  ble_cmd_queue_ = xQueueCreate(4, sizeof(BleCmd));
+  ble_service_.setOnSaveBaseline([this] {
+    const BleCmd cmd{BleCmd::Type::kSaveBaseline};
+    xQueueSend(ble_cmd_queue_, &cmd, 0);
+  });
+  ble_service_.setOnManualReport([this] {
+    const BleCmd cmd{BleCmd::Type::kManualReport};
+    xQueueSend(ble_cmd_queue_, &cmd, 0);
+  });
+  ble_service_.setOnSetTare([this](float v, int n) {
+    const BleCmd cmd{BleCmd::Type::kSetTare, v, n};
+    xQueueSend(ble_cmd_queue_, &cmd, 0);
+  });
   ble_service_.setOnConfigUpdate([this](const char* j) { handleConfigUpdate(j); });
   ble_service_.publishConfig(currentConfigJson().c_str());
   updateWeightMeasurement(0);
@@ -82,6 +94,15 @@ void Application::loop() {
     handleManualReport(now);
   }
 
+  BleCmd ble_cmd;
+  while (xQueueReceive(ble_cmd_queue_, &ble_cmd, 0) == pdTRUE) {
+    switch (ble_cmd.type) {
+      case BleCmd::Type::kSaveBaseline:  handleBaselineSave(now);                              break;
+      case BleCmd::Type::kManualReport:  handleManualReport(now);                              break;
+      case BleCmd::Type::kSetTare:       handleSetTare(ble_cmd.tare_value, ble_cmd.tare_nominal, now); break;
+    }
+  }
+
   updateLed(now);
 }
 
@@ -97,6 +118,11 @@ void Application::loadPersistedState() {
   }
   if (!flash_store_.loadHx711TareOffset(hx711TareOffset_)) {
     hx711TareOffset_ = 0;
+  }
+
+  int loadedNominal = 0;
+  if (flash_store_.loadNominalWeight(loadedNominal)) {
+    nominalWeightGrams_ = static_cast<float>(loadedNominal);
   }
 
   char hostBuf[64] = {0};
@@ -124,6 +150,7 @@ void Application::updateWeightMeasurement(const uint32_t nowMs) {
 }
 
 void Application::handleBaselineSave(const uint32_t nowMs) {
+  Serial.println("[app] handleBaselineSave enter");
   turnOnLed(nowMs);
   updateWeightMeasurement(nowMs);
 
@@ -165,7 +192,42 @@ void Application::handleBaselineSave(const uint32_t nowMs) {
   Serial.println("baselineWeight save failed");
 }
 
+void Application::handleSetTare(float value, int nominal, const uint32_t nowMs) {
+  bool changed = false;
+
+  if (value > 0.0F) {
+    baselineWeight_ = value;
+    hasBaselineWeight_ = true;
+    const time_t nowEpoch = time(nullptr);
+    baselineTimestamp_ = (nowEpoch >= kMinValidEpoch) ? static_cast<int64_t>(nowEpoch) : 0;
+    hasBaselineTimestamp_ = (baselineTimestamp_ > 0);
+    warning500_sent_ = false;
+    warning100_sent_ = false;
+    warning10_sent_ = false;
+    flash_store_.saveBaselineWeight(baselineWeight_);
+    flash_store_.saveBaselineTimestamp(baselineTimestamp_);
+    flash_store_.saveThresholdAlertSent(false, kWarning500Key);
+    flash_store_.saveThresholdAlertSent(false, kWarning100Key);
+    flash_store_.saveThresholdAlertSent(false, kWarning10Key);
+    changed = true;
+    Serial.print("[ble] set_tare: baseline="); Serial.print(value, 1); Serial.println(" g");
+  }
+
+  if (nominal > 0) {
+    nominalWeightGrams_ = static_cast<float>(nominal);
+    flash_store_.saveNominalWeight(nominal);
+    changed = true;
+    Serial.print("[ble] set_tare: nominal="); Serial.print(nominal); Serial.println(" g");
+  }
+
+  if (changed) {
+    turnOnLed(nowMs);
+    publishBleSpool();
+  }
+}
+
 void Application::handleManualReport(const uint32_t nowMs) {
+  Serial.println("[app] handleManualReport enter");
   turnOnLed(nowMs);
   updateWeightMeasurement(nowMs);
   sendMessageToSerialAndTelegram(BuildStatusMessage(makeStatusSnapshot()));
@@ -254,11 +316,12 @@ StatusSnapshot Application::makeStatusSnapshot() const {
   snapshot.hasBaselineTimestamp = hasBaselineTimestamp_;
   snapshot.baselineTimestamp = baselineTimestamp_;
   snapshot.currentTimestamp = static_cast<int64_t>(time(nullptr));
-  snapshot.filamentSpoolWeightGrams = config::kInitialFilamentWeightGrams;
+  snapshot.filamentSpoolWeightGrams = nominalWeightGrams_;
   return snapshot;
 }
 
 void Application::publishBleSpool() {
+  if (!ble_service_.isConnected()) return;
   const StatusSnapshot snap = makeStatusSnapshot();
   ble::SpoolPayload p;
   if (snap.hasBaselineWeight && snap.hasCurrentGrossWeight) {
