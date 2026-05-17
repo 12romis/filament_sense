@@ -27,4 +27,10 @@ constexpr uint8_t kButtonPins[kButtonCount] = {18, 19};
 
 #define LED_PIN 15
 
+// BME280 I2C wiring: SDA=GPIO6, SCL=GPIO7.
+// Address 0x76 when SDO/ADDR pin → GND; use 0x77 when SDO/ADDR → VCC.
+constexpr uint8_t kBme280Sda = 6;
+constexpr uint8_t kBme280Scl = 7;
+constexpr uint8_t kBme280Address = 0x76;
+
 }  // namespace config

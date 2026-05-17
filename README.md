@@ -49,6 +49,7 @@ FilamentSense — проєкт для ESP32-C6 (Arduino + PlatformIO), який 
 - ESP32-C6 DevKitC-1
 - 4 тензодатчики
 - 1 модуль HX711
+- 1 модуль BME280 (температура, вологість, атмосферний тиск)
 - 2 кнопки (GPIO18, GPIO19)
 - LED (GPIO15)
 - 3D-принтер Bambu Lab P1S (для MQTT-подій)
@@ -72,6 +73,9 @@ FilamentSense — проєкт для ESP32-C6 (Arduino + PlatformIO), який 
 | `kFilamentAlmostEmptyGrams` | `10.0` | Поріг "майже порожньо" |
 | `kButtonPins` | `{18, 19}` | GPIO кнопок |
 | `LED_PIN` | `15` | GPIO індикаторної LED |
+| `kBme280Sda` | `6` | I2C SDA для BME280 |
+| `kBme280Scl` | `7` | I2C SCL для BME280 |
+| `kBme280Address` | `0x76` | I2C адреса BME280 (SDO → GND); `0x77` якщо SDO → VCC |
 
 ### 3.2 Wi-Fi + Telegram + Bambu MQTT config
 
@@ -142,6 +146,20 @@ FilamentSense — проєкт для ESP32-C6 (Arduino + PlatformIO), який 
 
 LED на GPIO15 — анод через резистор до GPIO15, катод на GND.
 
+### 4.4 BME280 → ESP32 (I2C)
+
+| BME280 | ESP32-C6 | Примітка |
+|---|---|---|
+| VCC | 3V3 | Живлення 3.3 В |
+| GND | GND | Земля |
+| SCL | GPIO7 | I2C тактування |
+| SDA | GPIO6 | I2C дані |
+| SDO/ADDR | GND | I2C адреса 0x76; підключити до VCC для адреси 0x77 |
+| CSB | VCC | Вибір I2C режиму (не SPI) |
+
+> Якщо на платі BME280 вже є pull-up резистори на SDA/SCL — додаткові не потрібні.
+> Якщо ні — підтягнути SDA і SCL через 4.7 кОм до 3V3.
+
 ---
 
 ## 5. BLE GATT-сервер
@@ -151,7 +169,7 @@ LED на GPIO15 — анод через резистор до GPIO15, катод
 | Характеристика | UUID (суфікс) | Properties | Розмір |
 |---|---|---|---|
 | SpoolData | `...26a0` | READ, NOTIFY | 21 байт |
-| EnvData | `...26b0` | READ, NOTIFY | 12 байт (резерв) |
+| EnvData | `...26b0` | READ, NOTIFY | 12 байт |
 | Cmd | `...26b2` | WRITE, WRITE_NR | JSON |
 | Config | `...26b3` | READ, WRITE | JSON |
 
@@ -167,7 +185,18 @@ LED на GPIO15 — анод через резистор до GPIO15, катод
 
 NOTIFY надсилається після кожного виміру ваги (~1 раз/хв) та після операцій з baseline.
 
-### 5.3 Config характеристика
+### 5.3 EnvData payload (12 байт, little-endian)
+
+| Offset | Розмір | Тип | Поле | Значення при відсутності даних |
+|---|---|---|---|---|
+| 0 | 4 | float | `temperatureCelsius` | NaN |
+| 4 | 4 | float | `humidityPercent` | NaN |
+| 8 | 4 | float | `pressureHpa` | NaN |
+
+NOTIFY надсилається одразу після виміру ваги (той самий цикл ~1 раз/хв).
+Якщо датчик BME280 не знайдений — характеристика залишається порожньою (NaN).
+
+### 5.4 Config характеристика
 
 READ повертає поточну конфігурацію у JSON:
 ```json
@@ -180,7 +209,7 @@ WRITE приймає JSON для оновлення:
 ```
 Новий host зберігається у flash, MQTT-підключення переключається одразу.
 
-### 5.4 Cmd характеристика
+### 5.5 Cmd характеристика
 
 WRITE (без відповіді), UTF-8 JSON:
 
@@ -189,7 +218,7 @@ WRITE (без відповіді), UTF-8 JSON:
 | Save baseline | `{"cmd":"save_baseline","slot":0}` | Аналог кнопки #1: зберегти baseline, скинути алерти, надіслати NOTIFY |
 | Manual report | `{"cmd":"manual_report"}` | Аналог кнопки #2: Telegram-звіт |
 
-### 5.5 Поведінка підключення
+### 5.6 Поведінка підключення
 
 - ESP32 рекламується **завжди**, навіть під час активного Wi-Fi/MQTT.
 - Після відключення Android — автоматичний restart advertising.
@@ -347,9 +376,11 @@ docs/shared/
 
 **Потік даних:**
 ```
-HX711 → ScaleManager → Application → BleService (NOTIFY)
+HX711 → ScaleManager → Application → BleService (SpoolData NOTIFY)
                                     → Telegram (alerts, events)
                                     → Serial (логи)
+BME280 → Bme280Sensor → Application → BleService (EnvData NOTIFY)
+                                     → Serial (логи)
 BLE Cmd →  Application → handleBaselineSave / handleManualReport
 BLE Config → Application → FlashStore + BambuMqttListener.reconfigureHost()
 Bambu MQTT → BambuMqttListener → Application → Telegram

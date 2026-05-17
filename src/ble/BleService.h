@@ -21,6 +21,12 @@ struct SpoolPayload {
   bool hasFilament = false;
 };
 
+struct EnvPayload {
+  float temperatureCelsius = std::numeric_limits<float>::quiet_NaN();
+  float humidityPercent    = std::numeric_limits<float>::quiet_NaN();
+  float pressureHpa        = std::numeric_limits<float>::quiet_NaN();
+};
+
 class BleService {
  public:
   void begin();
@@ -31,6 +37,7 @@ class BleService {
   void setConnectionState(BleConnectionState state) { connection_state_ = state; }
 
   void publishSpoolData(const SpoolPayload& p);
+  void publishEnvData(const EnvPayload& p);
   void publishConfig(const char* json);
 
   void setOnSaveBaseline(std::function<void()> cb) { on_save_baseline_ = std::move(cb); }

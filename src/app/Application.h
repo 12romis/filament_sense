@@ -11,6 +11,7 @@
 #include "ble/BleService.h"
 #include "domain/FilamentSenseService.h"
 #include "hal/buttons/ButtonInput.h"
+#include "hal/env/Bme280Sensor.h"
 #include "hal/scale/ScaleManager.h"
 #include "storage/FlashStore.h"
 
@@ -38,10 +39,13 @@ class Application {
   void trySendThresholdAlert(const char* header, bool& sentFlag, const char* flashKey);
   StatusSnapshot makeStatusSnapshot() const;
   void publishBleSpool();
+  void updateEnvMeasurement();
+  void publishBleEnv();
   void turnOnLed(uint32_t nowMs);
   void updateLed(uint32_t nowMs);
 
   hal::ScaleManager scale_manager_;
+  hal::Bme280Sensor bme280_sensor_;
   BambuMqttListener bambu_mqtt_listener_;
   CalibrationConsole calibration_console_;
   hal::ButtonInput buttons_;
@@ -70,6 +74,11 @@ class Application {
   bool warning500_sent_ = false;
   bool warning100_sent_ = false;
   bool warning10_sent_ = false;
+
+  bool has_last_env_ = false;
+  float last_temp_celsius_ = 0.0F;
+  float last_humidity_percent_ = 0.0F;
+  float last_pressure_hpa_ = 0.0F;
 
   bool led_active_ = false;
   uint32_t led_toggle_time_ = 0;

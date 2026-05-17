@@ -41,6 +41,7 @@ void Application::setup() {
   loadPersistedState();
   bambu_mqtt_listener_.begin(Serial, active_mqtt_host_);
   scale_manager_.begin(config::kScaleHx711, kHx711RawUnitsPerGram_, hx711TareOffset_);
+  bme280_sensor_.begin(config::kBme280Sda, config::kBme280Scl, config::kBme280Address);
 
   network_service_.connectWifi();
   network_service_.syncClock();
@@ -147,6 +148,7 @@ void Application::updateWeightMeasurement(const uint32_t nowMs) {
 
   checkFilamentThresholdAlerts();
   publishBleSpool();
+  updateEnvMeasurement();
 }
 
 void Application::handleBaselineSave(const uint32_t nowMs) {
@@ -337,6 +339,36 @@ void Application::publishBleSpool() {
       : std::numeric_limits<float>::quiet_NaN();
   p.baselineTimestamp = snap.hasBaselineTimestamp ? snap.baselineTimestamp : 0;
   ble_service_.publishSpoolData(p);
+}
+
+void Application::updateEnvMeasurement() {
+  if (!bme280_sensor_.isAvailable()) return;
+  float temp = 0.0F, hum = 0.0F, pres = 0.0F;
+  if (!bme280_sensor_.read(temp, hum, pres)) return;
+  last_temp_celsius_      = temp;
+  last_humidity_percent_  = hum;
+  last_pressure_hpa_      = pres;
+  has_last_env_           = true;
+  Serial.print("[bme280] T="); Serial.print(temp, 1);
+  Serial.print("C H=");        Serial.print(hum, 1);
+  Serial.print("% P=");        Serial.print(pres, 1);
+  Serial.println("hPa");
+  publishBleEnv();
+}
+
+void Application::publishBleEnv() {
+  if (!ble_service_.isConnected()) return;
+  ble::EnvPayload p;
+  if (has_last_env_) {
+    p.temperatureCelsius = last_temp_celsius_;
+    p.humidityPercent    = last_humidity_percent_;
+    p.pressureHpa        = last_pressure_hpa_;
+  }
+  Serial.print("[ble] env notify T="); Serial.print(p.temperatureCelsius, 1);
+  Serial.print("C H=");               Serial.print(p.humidityPercent, 1);
+  Serial.print("% P=");               Serial.print(p.pressureHpa, 1);
+  Serial.println("hPa");
+  ble_service_.publishEnvData(p);
 }
 
 void Application::handleConfigUpdate(const char* json) {

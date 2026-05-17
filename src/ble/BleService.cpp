@@ -205,6 +205,15 @@ void BleService::publishSpoolData(const SpoolPayload& p) {
   spool_data_char_->notify();
 }
 
+void BleService::publishEnvData(const EnvPayload& p) {
+  uint8_t buf[12];
+  memcpy(buf + 0, &p.temperatureCelsius, 4);
+  memcpy(buf + 4, &p.humidityPercent,    4);
+  memcpy(buf + 8, &p.pressureHpa,        4);
+  env_data_char_->setValue(buf, sizeof(buf));
+  env_data_char_->notify();
+}
+
 void BleService::publishConfig(const char* json) {
   if (!json) return;
   config_char_->setValue(reinterpret_cast<const uint8_t*>(json), std::strlen(json));
