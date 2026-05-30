@@ -269,11 +269,6 @@ void Application::handleHeatBed(int target, uint32_t nowMs) {
     Serial.println("[app] heat_bed: busy, ignored");
     return;
   }
-  BambuTelemetry tel;
-  if (bambu_mqtt_listener_.getTelemetry(tel) &&
-      strcmp(tel.gcode_state, "RUNNING") == 0) {
-    Serial.println("[app] heat_bed: WARNING printer is currently printing");
-  }
   buildHeatSteps(target);
   if (heat_num_steps_ == 0) {
     Serial.println("[app] heat_bed: no steps");

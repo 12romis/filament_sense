@@ -261,8 +261,19 @@ void BambuMqttListener::handleMessage(const char* topic,
   const char* subtask_name = subtask_name_var.is<const char*>() ? subtask_name_var.as<const char*>() : nullptr;
   const char* gcode_state = gcode_state_var.is<const char*>() ? gcode_state_var.as<const char*>() : nullptr;
 
+  // gcode_file has the .3mf extension but is empty in FINISH/IDLE state.
+  // subtask_name persists across all states but lacks the extension.
+  // Build a URL-suitable name so reprint works even after ESP restart.
+  char subtask_with_ext[sizeof(last_raw_gcode_file_)] = {0};
+  const char* raw_for_url = gcode_file;
+  if ((raw_for_url == nullptr || raw_for_url[0] == '\0') &&
+      subtask_name != nullptr && subtask_name[0] != '\0') {
+    snprintf(subtask_with_ext, sizeof(subtask_with_ext), "%s.3mf", subtask_name);
+    raw_for_url = subtask_with_ext;
+  }
+
   const char* file_name = FallbackFileName(gcode_file, subtask_name, last_file_name_);
-  rememberFileName(file_name, gcode_file);
+  rememberFileName(file_name, raw_for_url);
 
   // Update telemetry cache
   auto tryFloat = [&](float& dst, const char* key) {
