@@ -41,10 +41,16 @@ class CmdCallbacks : public NimBLECharacteristicCallbacks {
  public:
   explicit CmdCallbacks(std::function<void()> onSaveBaseline,
                         std::function<void()> onManualReport,
-                        std::function<void(float, int)> onSetTare)
+                        std::function<void(float, int)> onSetTare,
+                        std::function<void(int)> onHeatBed,
+                        std::function<void()> onReprint,
+                        std::function<void()> onGetPrinterStatus)
       : on_save_baseline_(std::move(onSaveBaseline)),
         on_manual_report_(std::move(onManualReport)),
-        on_set_tare_(std::move(onSetTare)) {}
+        on_set_tare_(std::move(onSetTare)),
+        on_heat_bed_(std::move(onHeatBed)),
+        on_reprint_(std::move(onReprint)),
+        on_get_printer_status_(std::move(onGetPrinterStatus)) {}
 
   void onWrite(NimBLECharacteristic* chr, NimBLEConnInfo& info) override {
     (void)info;
@@ -62,19 +68,27 @@ class CmdCallbacks : public NimBLECharacteristicCallbacks {
       return;
     }
     Serial.print("[ble] cmd="); Serial.println(cmd);
+
     if (strcmp(cmd, "save_baseline") == 0) {
-      Serial.print("[ble] save_baseline cb="); Serial.println(on_save_baseline_ ? "set" : "null");
       if (on_save_baseline_) on_save_baseline_();
     } else if (strcmp(cmd, "manual_report") == 0) {
-      Serial.print("[ble] manual_report cb="); Serial.println(on_manual_report_ ? "set" : "null");
       if (on_manual_report_) on_manual_report_();
     } else if (strcmp(cmd, "set_tare") == 0) {
       const float value = doc["value"] | 0.0f;
       const int nominal = doc["nominal"] | 0;
-      Serial.print("[ble] set_tare cb="); Serial.println(on_set_tare_ ? "set" : "null");
       Serial.print("[ble] set_tare value="); Serial.print(value, 1);
       Serial.print(" nominal="); Serial.println(nominal);
       if (on_set_tare_) on_set_tare_(value, nominal);
+    } else if (strcmp(cmd, "heat_bed") == 0) {
+      const int target = doc["target"] | 61;
+      Serial.print("[ble] heat_bed target="); Serial.println(target);
+      if (on_heat_bed_) on_heat_bed_(target);
+    } else if (strcmp(cmd, "reprint") == 0) {
+      Serial.println("[ble] reprint");
+      if (on_reprint_) on_reprint_();
+    } else if (strcmp(cmd, "get_printer_status") == 0) {
+      Serial.println("[ble] get_printer_status");
+      if (on_get_printer_status_) on_get_printer_status_();
     } else {
       Serial.print("[ble] unknown cmd: "); Serial.println(cmd);
     }
@@ -84,6 +98,9 @@ class CmdCallbacks : public NimBLECharacteristicCallbacks {
   std::function<void()> on_save_baseline_;
   std::function<void()> on_manual_report_;
   std::function<void(float, int)> on_set_tare_;
+  std::function<void(int)> on_heat_bed_;
+  std::function<void()> on_reprint_;
+  std::function<void()> on_get_printer_status_;
 };
 
 class ConfigCallbacks : public NimBLECharacteristicCallbacks {
@@ -122,7 +139,20 @@ void BleService::begin() {
 }
 
 void BleService::tick(uint32_t nowMs) {
-  (void)nowMs;
+  if (server_ == nullptr) return;
+  if (server_->getConnectedCount() > 0) return;
+
+  // Watchdog: ensure advertising is running when no client is connected.
+  // NimBLE can silently drop advertising after a supervision-timeout disconnect.
+  constexpr uint32_t kAdvWatchdogMs = 3000;
+  if ((nowMs - last_adv_check_ms_) < kAdvWatchdogMs) return;
+  last_adv_check_ms_ = nowMs;
+
+  NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
+  if (adv != nullptr && !adv->isAdvertising()) {
+    NimBLEDevice::startAdvertising();
+    Serial.println("[ble] watchdog: advertising restarted");
+  }
 }
 
 void BleService::initServer() {
@@ -153,16 +183,22 @@ void BleService::initService() {
     env_data_char_->setValue(empty, sizeof(empty));
   }
 
-  auto* on_save = &on_save_baseline_;
+  auto* on_save   = &on_save_baseline_;
   auto* on_manual = &on_manual_report_;
-  auto* on_tare = &on_set_tare_;
+  auto* on_tare   = &on_set_tare_;
+  auto* on_heat   = &on_heat_bed_;
+  auto* on_rep    = &on_reprint_;
+  auto* on_status = &on_get_printer_status_;
   cmd_char_ = service_->createCharacteristic(
       config::kCmdUUID,
       NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
   cmd_char_->setCallbacks(new CmdCallbacks(
-      [on_save]() { if (*on_save) (*on_save)(); },
-      [on_manual]() { if (*on_manual) (*on_manual)(); },
-      [on_tare](float v, int n) { if (*on_tare) (*on_tare)(v, n); }));
+      [on_save]()            { if (*on_save)   (*on_save)();   },
+      [on_manual]()          { if (*on_manual) (*on_manual)(); },
+      [on_tare](float v, int n) { if (*on_tare) (*on_tare)(v, n); },
+      [on_heat](int t)       { if (*on_heat)   (*on_heat)(t);  },
+      [on_rep]()             { if (*on_rep)    (*on_rep)();    },
+      [on_status]()          { if (*on_status) (*on_status)(); }));
 
   auto* on_config = &on_config_update_;
   config_char_ = service_->createCharacteristic(
@@ -173,6 +209,15 @@ void BleService::initService() {
   {
     const char* placeholder = "{}";
     config_char_->setValue(reinterpret_cast<const uint8_t*>(placeholder), std::strlen(placeholder));
+  }
+
+  printer_status_char_ = service_->createCharacteristic(
+      config::kPrinterStatusUUID,
+      NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+  {
+    const char* placeholder = "{}";
+    printer_status_char_->setValue(
+        reinterpret_cast<const uint8_t*>(placeholder), std::strlen(placeholder));
   }
 }
 
@@ -217,6 +262,13 @@ void BleService::publishEnvData(const EnvPayload& p) {
 void BleService::publishConfig(const char* json) {
   if (!json) return;
   config_char_->setValue(reinterpret_cast<const uint8_t*>(json), std::strlen(json));
+}
+
+void BleService::publishPrinterStatus(const char* json) {
+  if (!json) return;
+  printer_status_char_->setValue(
+      reinterpret_cast<const uint8_t*>(json), std::strlen(json));
+  printer_status_char_->notify();
 }
 
 }  // namespace ble

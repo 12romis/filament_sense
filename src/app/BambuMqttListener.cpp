@@ -29,7 +29,6 @@ bool UseInsecureMqttTls() {
 #endif
 }
 
-
 void SafeCopy(char* dst, size_t dst_size, const char* src) {
   if (dst_size == 0) {
     return;
@@ -71,6 +70,7 @@ void BambuMqttListener::begin(Stream& serial, const char* host) {
   mqtt_client_.setBufferSize(kMqttBufferSize);
   mqtt_client_.setCallback(handleMessageThunk);
   instance_ = this;
+  deriveRequestTopic();
 }
 
 void BambuMqttListener::reconfigureHost(const char* host) {
@@ -116,6 +116,99 @@ bool BambuMqttListener::consumeEvent(BambuPrintEvent& out_event) {
   return true;
 }
 
+bool BambuMqttListener::getTelemetry(BambuTelemetry& out) const {
+  if (!telemetry_.valid) return false;
+  out = telemetry_;
+  return true;
+}
+
+void BambuMqttListener::publishGcodeLine(const char* gcode) {
+  if (!mqtt_client_.connected() || request_topic_[0] == '\0') return;
+  JsonDocument doc;
+  JsonObject print = doc["print"].to<JsonObject>();
+  print["sequence_id"] = "0";
+  print["command"] = "gcode_line";
+  print["param"] = gcode;
+  print["user_id"] = "0";
+  char payload[256];
+  serializeJson(doc, payload, sizeof(payload));
+  publishJson(payload);
+}
+
+void BambuMqttListener::publishPushall() {
+  if (!mqtt_client_.connected() || request_topic_[0] == '\0') return;
+  publishJson(
+      "{\"pushing\":{\"sequence_id\":\"0\",\"command\":\"pushall\","
+      "\"version\":1,\"push_target\":1}}");
+}
+
+void BambuMqttListener::publishReprintFile(const char* gcode_file) {
+  if (!mqtt_client_.connected() || request_topic_[0] == '\0') return;
+  if (gcode_file == nullptr || gcode_file[0] == '\0') {
+    if (serial_) serial_->println("[mqtt] reprint: no file");
+    return;
+  }
+
+  JsonDocument doc;
+  JsonObject print = doc["print"].to<JsonObject>();
+  print["sequence_id"] = "1";
+  print["command"] = "project_file";
+  print["param"] = "Metadata/plate_1.gcode";
+  print["subtask_name"] = gcode_file;
+  print["plate_idx"] = 0;
+
+  String url = "file:///sdcard/cache/";
+  url += gcode_file;
+  print["url"] = url.c_str();
+
+  print["project_id"] = "0";
+  print["profile_id"] = "0";
+  print["task_id"] = "0";
+  print["subtask_id"] = "0";
+  print["file"] = "";
+  print["md5"] = "";
+  print["timelapse"] = false;
+  print["bed_type"] = "auto";
+  print["bed_levelling"] = true;
+  print["flow_cali"] = false;
+  print["vibration_cali"] = false;
+  print["layer_inspect"] = false;
+  print["use_ams"] = false;
+  print["ams_mapping"].to<JsonArray>();
+
+  char payload[512];
+  if (serializeJson(doc, payload, sizeof(payload)) >= sizeof(payload)) {
+    if (serial_) serial_->println("[mqtt] reprint: payload overflow");
+    return;
+  }
+  publishJson(payload);
+}
+
+bool BambuMqttListener::publishJson(const char* json) {
+  if (!mqtt_client_.connected() || request_topic_[0] == '\0') return false;
+  const bool ok = mqtt_client_.publish(request_topic_, json);
+  if (serial_) {
+    serial_->print("[mqtt] pub ");
+    serial_->print(ok ? "ok" : "fail");
+    serial_->print(" -> ");
+    serial_->println(request_topic_);
+  }
+  return ok;
+}
+
+void BambuMqttListener::deriveRequestTopic() {
+  strncpy(request_topic_, config::kBambuMqttTopic, sizeof(request_topic_) - 1);
+  request_topic_[sizeof(request_topic_) - 1] = '\0';
+  const size_t len = strlen(request_topic_);
+  constexpr const char* kSuffix = "/report";
+  constexpr size_t kSuffixLen = 7;
+  if (len > kSuffixLen &&
+      strcmp(request_topic_ + len - kSuffixLen, kSuffix) == 0) {
+    strncpy(request_topic_ + len - kSuffixLen, "/request",
+            sizeof(request_topic_) - (len - kSuffixLen) - 1);
+  }
+}
+
 void BambuMqttListener::handleMessageThunk(char* topic, uint8_t* payload, unsigned int length) {
   if (instance_ == nullptr) {
     return;
@@ -129,14 +222,22 @@ void BambuMqttListener::handleMessage(const char* topic,
                                       const unsigned int length) {
   (void)topic;
 
-  StaticJsonDocument<256> filter;
-  JsonObject print_filter = filter.createNestedObject("print");
+  JsonDocument filter;
+  JsonObject print_filter = filter["print"].to<JsonObject>();
   print_filter["gcode_state"] = true;
   print_filter["gcode_file"] = true;
   print_filter["subtask_name"] = true;
   print_filter["print_error"] = true;
+  print_filter["nozzle_temper"] = true;
+  print_filter["nozzle_target_temper"] = true;
+  print_filter["bed_temper"] = true;
+  print_filter["bed_target_temper"] = true;
+  print_filter["mc_percent"] = true;
+  print_filter["mc_remaining_time"] = true;
+  print_filter["layer_num"] = true;
+  print_filter["total_layer_num"] = true;
 
-  StaticJsonDocument<1024> doc;
+  JsonDocument doc;
   DeserializationError error = deserializeJson(
       doc, payload, length, DeserializationOption::Filter(filter));
   if (error) {
@@ -161,8 +262,36 @@ void BambuMqttListener::handleMessage(const char* topic,
   const char* gcode_state = gcode_state_var.is<const char*>() ? gcode_state_var.as<const char*>() : nullptr;
 
   const char* file_name = FallbackFileName(gcode_file, subtask_name, last_file_name_);
-  rememberFileName(file_name);
+  rememberFileName(file_name, gcode_file);
 
+  // Update telemetry cache
+  auto tryFloat = [&](float& dst, const char* key) {
+    JsonVariantConst v = print[key];
+    if (!v.isNull()) dst = v.as<float>();
+  };
+  auto tryInt = [&](int& dst, const char* key) {
+    JsonVariantConst v = print[key];
+    if (!v.isNull()) dst = v.as<int>();
+  };
+
+  tryFloat(telemetry_.nozzle_temp,   "nozzle_temper");
+  tryFloat(telemetry_.nozzle_target, "nozzle_target_temper");
+  tryFloat(telemetry_.bed_temp,      "bed_temper");
+  tryFloat(telemetry_.bed_target,    "bed_target_temper");
+  tryInt(telemetry_.mc_percent,   "mc_percent");
+  tryInt(telemetry_.mc_remaining, "mc_remaining_time");
+  tryInt(telemetry_.layer_num,    "layer_num");
+  tryInt(telemetry_.total_layers, "total_layer_num");
+
+  if (gcode_state != nullptr && gcode_state[0] != '\0') {
+    SafeCopy(telemetry_.gcode_state, sizeof(telemetry_.gcode_state), gcode_state);
+  }
+  SafeCopy(telemetry_.file_name, sizeof(telemetry_.file_name), file_name);
+  telemetry_.valid = true;
+
+  if (on_telemetry_update_) on_telemetry_update_();
+
+  // Print event logic
   if (gcode_state == nullptr || gcode_state[0] == '\0') {
     return;
   }
@@ -210,7 +339,6 @@ void BambuMqttListener::ensureConnection(const uint32_t now_ms) {
   }
   last_connect_attempt_ms_ = now_ms;
 
-  // На випадок битого/висячого сокета після попередньої невдалої спроби.
   mqtt_client_.disconnect();
   secure_client_.stop();
 
@@ -264,7 +392,12 @@ void BambuMqttListener::ensureConnection(const uint32_t now_ms) {
 
   if (serial_ != nullptr) {
     serial_->println("bambu mqtt connected");
+    serial_->print("[mqtt] request topic: ");
+    serial_->println(request_topic_);
   }
+
+  // Request full telemetry snapshot on (re)connect so cache is populated.
+  publishPushall();
 }
 
 void BambuMqttListener::configureTls() {
@@ -281,8 +414,11 @@ void BambuMqttListener::configureTls() {
   secure_client_.setInsecure();
 }
 
-void BambuMqttListener::rememberFileName(const char* file_name) {
+void BambuMqttListener::rememberFileName(const char* file_name, const char* raw_gcode_file) {
   SafeCopy(last_file_name_, sizeof(last_file_name_), file_name);
+  if (raw_gcode_file != nullptr && raw_gcode_file[0] != '\0') {
+    SafeCopy(last_raw_gcode_file_, sizeof(last_raw_gcode_file_), raw_gcode_file);
+  }
 }
 
 void BambuMqttListener::rememberState(const char* state) {

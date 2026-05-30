@@ -32,6 +32,13 @@ class Application {
   void handleManualReport(uint32_t nowMs);
   void handleBambuPrintEvent(const BambuPrintEvent& event, uint32_t nowMs);
   void handleConfigUpdate(const char* json);
+  void handleHeatBed(int target, uint32_t nowMs);
+  void handleReprint(uint32_t nowMs);
+  void handleGetPrinterStatus();
+  void tickPrinterCmdState(uint32_t nowMs);
+  void buildHeatSteps(int target);
+  void sendReprintCommand();
+  void publishBlePrinterStatus();
   String buildPrintEventMessage(const BambuPrintEvent& event) const;
   String currentConfigJson() const;
   void sendMessageToSerialAndTelegram(const String& message);
@@ -83,10 +90,27 @@ class Application {
   bool led_active_ = false;
   uint32_t led_toggle_time_ = 0;
 
+  // Printer command state machine
+  enum class PrinterCmdState : uint8_t { kIdle, kHeating };
+  PrinterCmdState printer_cmd_state_ = PrinterCmdState::kIdle;
+  int  heat_steps_[8] = {};
+  int  heat_num_steps_ = 0;
+  int  heat_step_index_ = 0;
+  uint32_t last_heat_step_ms_ = 0;
+  bool reprint_after_heat_ = false;
+
   struct BleCmd {
-    enum class Type : uint8_t { kManualReport, kSaveBaseline, kSetTare } type;
+    enum class Type : uint8_t {
+      kManualReport,
+      kSaveBaseline,
+      kSetTare,
+      kHeatBed,
+      kReprint,
+      kGetPrinterStatus,
+    } type;
     float tare_value{0.0f};
     int tare_nominal{0};
+    int int_param{0};
   };
   QueueHandle_t ble_cmd_queue_{nullptr};
 };

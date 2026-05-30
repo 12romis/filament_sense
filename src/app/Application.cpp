@@ -20,6 +20,11 @@ constexpr char kWarning500Key[] = "warning500Sent";
 constexpr char kWarning100Key[] = "warning100Sent";
 constexpr char kWarning10Key[] = "warning10Sent";
 
+constexpr int kHeatStepSize = 9;
+constexpr int kHeatStartTemp = 25;
+constexpr uint32_t kHeatStepIntervalMs = 12000;
+constexpr int kReprintBedTargetCelsius = 61;
+
 const char* SafeText(const char* value) {
   return (value != nullptr && value[0] != '\0') ? value : "unknown";
 }
@@ -60,8 +65,23 @@ void Application::setup() {
     const BleCmd cmd{BleCmd::Type::kSetTare, v, n};
     xQueueSend(ble_cmd_queue_, &cmd, 0);
   });
+  ble_service_.setOnHeatBed([this](int target) {
+    const BleCmd cmd{BleCmd::Type::kHeatBed, 0.0f, 0, target};
+    xQueueSend(ble_cmd_queue_, &cmd, 0);
+  });
+  ble_service_.setOnReprint([this] {
+    const BleCmd cmd{BleCmd::Type::kReprint};
+    xQueueSend(ble_cmd_queue_, &cmd, 0);
+  });
+  ble_service_.setOnGetPrinterStatus([this] {
+    const BleCmd cmd{BleCmd::Type::kGetPrinterStatus};
+    xQueueSend(ble_cmd_queue_, &cmd, 0);
+  });
   ble_service_.setOnConfigUpdate([this](const char* j) { handleConfigUpdate(j); });
   ble_service_.publishConfig(currentConfigJson().c_str());
+
+  bambu_mqtt_listener_.setOnTelemetryUpdate([this] { publishBlePrinterStatus(); });
+
   updateWeightMeasurement(0);
 }
 
@@ -98,12 +118,16 @@ void Application::loop() {
   BleCmd ble_cmd;
   while (xQueueReceive(ble_cmd_queue_, &ble_cmd, 0) == pdTRUE) {
     switch (ble_cmd.type) {
-      case BleCmd::Type::kSaveBaseline:  handleBaselineSave(now);                              break;
-      case BleCmd::Type::kManualReport:  handleManualReport(now);                              break;
-      case BleCmd::Type::kSetTare:       handleSetTare(ble_cmd.tare_value, ble_cmd.tare_nominal, now); break;
+      case BleCmd::Type::kSaveBaseline:       handleBaselineSave(now);                                       break;
+      case BleCmd::Type::kManualReport:       handleManualReport(now);                                       break;
+      case BleCmd::Type::kSetTare:            handleSetTare(ble_cmd.tare_value, ble_cmd.tare_nominal, now);  break;
+      case BleCmd::Type::kHeatBed:            handleHeatBed(ble_cmd.int_param, now);                         break;
+      case BleCmd::Type::kReprint:            handleReprint(now);                                            break;
+      case BleCmd::Type::kGetPrinterStatus:   handleGetPrinterStatus();                                      break;
     }
   }
 
+  tickPrinterCmdState(now);
   updateLed(now);
 }
 
@@ -238,6 +262,141 @@ void Application::handleManualReport(const uint32_t nowMs) {
 void Application::handleBambuPrintEvent(const BambuPrintEvent& event, const uint32_t nowMs) {
   updateWeightMeasurement(nowMs);
   sendMessageToSerialAndTelegram(buildPrintEventMessage(event));
+}
+
+void Application::handleHeatBed(int target, uint32_t nowMs) {
+  if (printer_cmd_state_ != PrinterCmdState::kIdle) {
+    Serial.println("[app] heat_bed: busy, ignored");
+    return;
+  }
+  BambuTelemetry tel;
+  if (bambu_mqtt_listener_.getTelemetry(tel) &&
+      strcmp(tel.gcode_state, "RUNNING") == 0) {
+    Serial.println("[app] heat_bed: WARNING printer is currently printing");
+  }
+  buildHeatSteps(target);
+  if (heat_num_steps_ == 0) {
+    Serial.println("[app] heat_bed: no steps");
+    return;
+  }
+  printer_cmd_state_ = PrinterCmdState::kHeating;
+  heat_step_index_ = 0;
+  last_heat_step_ms_ = nowMs - kHeatStepIntervalMs;  // fire first step immediately
+  Serial.print("[app] heat_bed target="); Serial.print(target);
+  Serial.print(" steps="); Serial.println(heat_num_steps_);
+}
+
+void Application::handleReprint(uint32_t nowMs) {
+  if (printer_cmd_state_ != PrinterCmdState::kIdle) {
+    Serial.println("[app] reprint: busy, ignored");
+    return;
+  }
+  BambuTelemetry tel;
+  if (bambu_mqtt_listener_.getTelemetry(tel) &&
+      strcmp(tel.gcode_state, "RUNNING") == 0) {
+    Serial.println("[app] reprint: BLOCKED - printer is currently printing");
+    return;
+  }
+  if (bambu_mqtt_listener_.getLastGcodeFile()[0] == '\0') {
+    Serial.println("[app] reprint: no previous file");
+    return;
+  }
+  reprint_after_heat_ = true;
+  handleHeatBed(kReprintBedTargetCelsius, nowMs);
+}
+
+void Application::handleGetPrinterStatus() {
+  BambuTelemetry tel;
+  if (!bambu_mqtt_listener_.getTelemetry(tel)) {
+    // No cached data yet — request a full snapshot from the printer.
+    bambu_mqtt_listener_.publishPushall();
+    return;
+  }
+  publishBlePrinterStatus();
+}
+
+void Application::buildHeatSteps(int target) {
+  heat_num_steps_ = 0;
+  const int max_steps = static_cast<int>(sizeof(heat_steps_) / sizeof(heat_steps_[0]));
+
+  // Determine effective start: use current bed temp from telemetry if available,
+  // otherwise fall back to kHeatStartTemp. This avoids sending steps below the
+  // current bed temperature (which would complete instantly and waste MQTT commands).
+  int effective_start = kHeatStartTemp;
+  BambuTelemetry tel;
+  if (bambu_mqtt_listener_.getTelemetry(tel) && !std::isnan(tel.bed_temp)) {
+    effective_start = static_cast<int>(tel.bed_temp);
+    Serial.printf("[app] heat_bed: current bed=%.1f°C -> skipping steps below %d°C\n",
+                  tel.bed_temp, effective_start);
+  } else {
+    Serial.printf("[app] heat_bed: no bed temp, starting from %d°C\n", effective_start);
+  }
+
+  // Walk the canonical step sequence starting from kHeatStartTemp,
+  // but only enqueue steps that are still above the current temperature.
+  for (int temp = kHeatStartTemp; temp < target && heat_num_steps_ < max_steps - 1; temp += kHeatStepSize) {
+    if (temp >= effective_start) {
+      heat_steps_[heat_num_steps_++] = temp;
+    }
+  }
+  heat_steps_[heat_num_steps_++] = target;
+}
+
+void Application::tickPrinterCmdState(uint32_t nowMs) {
+  if (printer_cmd_state_ != PrinterCmdState::kHeating) return;
+
+  // Respect 12-second interval between steps (first step fires immediately
+  // because last_heat_step_ms_ is pre-offset in handleHeatBed).
+  if ((nowMs - last_heat_step_ms_) < kHeatStepIntervalMs) return;
+
+  if (heat_step_index_ < heat_num_steps_) {
+    char gcode[32];
+    snprintf(gcode, sizeof(gcode), "M190 S%d\n", heat_steps_[heat_step_index_]);
+    bambu_mqtt_listener_.publishGcodeLine(gcode);
+    Serial.printf("[app] heat step %d/%d -> M190 S%d\n",
+                  heat_step_index_ + 1, heat_num_steps_, heat_steps_[heat_step_index_]);
+    heat_step_index_++;
+    last_heat_step_ms_ = nowMs;
+    return;
+  }
+
+  // All steps sent.
+  printer_cmd_state_ = PrinterCmdState::kIdle;
+  Serial.println("[app] heating sequence complete");
+
+  if (reprint_after_heat_) {
+    reprint_after_heat_ = false;
+    sendReprintCommand();
+  }
+}
+
+void Application::sendReprintCommand() {
+  const char* gcode_file = bambu_mqtt_listener_.getLastGcodeFile();
+  Serial.print("[app] reprint file: "); Serial.println(gcode_file[0] ? gcode_file : "(none)");
+  bambu_mqtt_listener_.publishReprintFile(gcode_file);
+}
+
+void Application::publishBlePrinterStatus() {
+  if (!ble_service_.isConnected()) return;
+
+  BambuTelemetry tel;
+  if (!bambu_mqtt_listener_.getTelemetry(tel)) return;
+
+  JsonDocument doc;
+  doc["gs"]  = tel.gcode_state;
+  doc["f"]   = tel.file_name;
+  if (!std::isnan(tel.nozzle_temp))   doc["nt"]  = serialized(String(tel.nozzle_temp, 1));
+  if (!std::isnan(tel.nozzle_target)) doc["ntt"] = static_cast<int>(tel.nozzle_target);
+  if (!std::isnan(tel.bed_temp))      doc["bt"]  = serialized(String(tel.bed_temp, 1));
+  if (!std::isnan(tel.bed_target))    doc["btt"] = static_cast<int>(tel.bed_target);
+  doc["pct"] = tel.mc_percent;
+  doc["rem"] = tel.mc_remaining;
+  doc["ly"]  = tel.layer_num;
+  doc["tly"] = tel.total_layers;
+
+  char buf[256];
+  serializeJson(doc, buf, sizeof(buf));
+  ble_service_.publishPrinterStatus(buf);
 }
 
 String Application::buildPrintEventMessage(const BambuPrintEvent& event) const {
