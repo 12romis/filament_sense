@@ -22,8 +22,9 @@ constexpr char kWarning10Key[] = "warning10Sent";
 
 constexpr int kHeatStepSize = 9;
 constexpr int kHeatStartTemp = 25;
-constexpr uint32_t kHeatStepIntervalMs = 12000;
-constexpr int kReprintBedTargetCelsius = 61;
+constexpr uint32_t kHeatStepIntervalMs = 15000;
+constexpr int kReprintBedTargetCelsius = 55;
+constexpr uint32_t kReprintPostHeatDelayMs = 3000;
 
 const char* SafeText(const char* value) {
   return (value != nullptr && value[0] != '\0') ? value : "unknown";
@@ -69,18 +70,28 @@ void Application::setup() {
     const BleCmd cmd{BleCmd::Type::kHeatBed, 0.0f, 0, target};
     xQueueSend(ble_cmd_queue_, &cmd, 0);
   });
-  ble_service_.setOnReprint([this] {
-    const BleCmd cmd{BleCmd::Type::kReprint};
+  ble_service_.setOnReprint([this](const char* file) {
+    BleCmd cmd{BleCmd::Type::kReprint};
+    if (file && file[0]) {
+      strncpy(cmd.file_override, file, sizeof(cmd.file_override) - 1);
+    }
     xQueueSend(ble_cmd_queue_, &cmd, 0);
   });
   ble_service_.setOnGetPrinterStatus([this] {
     const BleCmd cmd{BleCmd::Type::kGetPrinterStatus};
     xQueueSend(ble_cmd_queue_, &cmd, 0);
   });
+  ble_service_.setOnListFiles([this] {
+    const BleCmd cmd{BleCmd::Type::kListFiles};
+    xQueueSend(ble_cmd_queue_, &cmd, 0);
+  });
   ble_service_.setOnConfigUpdate([this](const char* j) { handleConfigUpdate(j); });
   ble_service_.publishConfig(currentConfigJson().c_str());
 
   bambu_mqtt_listener_.setOnTelemetryUpdate([this] { publishBlePrinterStatus(); });
+  bambu_mqtt_listener_.setOnNewFileLearned([this](const char* subtask, const char* param) {
+    addReprintFile(subtask, param);
+  });
 
   updateWeightMeasurement(0);
 }
@@ -122,8 +133,9 @@ void Application::loop() {
       case BleCmd::Type::kManualReport:       handleManualReport(now);                                       break;
       case BleCmd::Type::kSetTare:            handleSetTare(ble_cmd.tare_value, ble_cmd.tare_nominal, now);  break;
       case BleCmd::Type::kHeatBed:            handleHeatBed(ble_cmd.int_param, now);                         break;
-      case BleCmd::Type::kReprint:            handleReprint(now);                                            break;
+      case BleCmd::Type::kReprint:            handleReprint(ble_cmd.file_override, now);                     break;
       case BleCmd::Type::kGetPrinterStatus:   handleGetPrinterStatus();                                      break;
+      case BleCmd::Type::kListFiles:          handleListFiles();                                             break;
     }
   }
 
@@ -157,6 +169,23 @@ void Application::loadPersistedState() {
     strncpy(active_mqtt_host_, config::kBambuMqttHost, sizeof(active_mqtt_host_));
   }
   active_mqtt_host_[sizeof(active_mqtt_host_) - 1] = '\0';
+
+  // Load recent print files list from NVS
+  String filesJson;
+  if (flash_store_.loadFilesList(filesJson) && filesJson.length() > 2) {
+    JsonDocument doc;
+    if (!deserializeJson(doc, filesJson) && doc.is<JsonArray>()) {
+      for (JsonVariantConst v : doc.as<JsonArrayConst>()) {
+        if (reprint_files_count_ >= kMaxReprintFiles) break;
+        const char* s = v.as<const char*>();
+        if (s && s[0]) {
+          strncpy(reprint_files_[reprint_files_count_], s, sizeof(reprint_files_[0]) - 1);
+          reprint_files_count_++;
+        }
+      }
+    }
+    Serial.printf("[app] loaded %d recent files\n", reprint_files_count_);
+  }
 }
 
 void Application::updateWeightMeasurement(const uint32_t nowMs) {
@@ -281,7 +310,7 @@ void Application::handleHeatBed(int target, uint32_t nowMs) {
   Serial.print(" steps="); Serial.println(heat_num_steps_);
 }
 
-void Application::handleReprint(uint32_t nowMs) {
+void Application::handleReprint(const char* file_override, uint32_t nowMs) {
   if (printer_cmd_state_ != PrinterCmdState::kIdle) {
     Serial.println("[app] reprint: busy, ignored");
     return;
@@ -292,10 +321,14 @@ void Application::handleReprint(uint32_t nowMs) {
     Serial.println("[app] reprint: BLOCKED - printer is currently printing");
     return;
   }
-  if (bambu_mqtt_listener_.getLastGcodeFile()[0] == '\0') {
+  const bool has_override = file_override != nullptr && file_override[0] != '\0';
+  if (!has_override && bambu_mqtt_listener_.getLastGcodeFile()[0] == '\0') {
     Serial.println("[app] reprint: no previous file");
     return;
   }
+  strncpy(reprint_file_override_,
+          has_override ? file_override : "",
+          sizeof(reprint_file_override_) - 1);
   reprint_after_heat_ = true;
   handleHeatBed(kReprintBedTargetCelsius, nowMs);
 }
@@ -338,6 +371,15 @@ void Application::buildHeatSteps(int target) {
 }
 
 void Application::tickPrinterCmdState(uint32_t nowMs) {
+  if (printer_cmd_state_ == PrinterCmdState::kWaitingToReprint) {
+    if ((nowMs - reprint_wait_start_ms_) >= kReprintPostHeatDelayMs) {
+      printer_cmd_state_ = PrinterCmdState::kIdle;
+      Serial.println("[app] reprint: sending after delay");
+      sendReprintCommand();
+    }
+    return;
+  }
+
   if (printer_cmd_state_ != PrinterCmdState::kHeating) return;
 
   // Respect 12-second interval between steps (first step fires immediately
@@ -361,14 +403,19 @@ void Application::tickPrinterCmdState(uint32_t nowMs) {
 
   if (reprint_after_heat_) {
     reprint_after_heat_ = false;
-    sendReprintCommand();
+    printer_cmd_state_ = PrinterCmdState::kWaitingToReprint;
+    reprint_wait_start_ms_ = nowMs;
+    Serial.println("[app] reprint: waiting 3s before sending print command...");
   }
 }
 
 void Application::sendReprintCommand() {
-  const char* gcode_file = bambu_mqtt_listener_.getLastGcodeFile();
+  const char* gcode_file = (reprint_file_override_[0] != '\0')
+                               ? reprint_file_override_
+                               : bambu_mqtt_listener_.getLastGcodeFile();
   Serial.print("[app] reprint file: "); Serial.println(gcode_file[0] ? gcode_file : "(none)");
   bambu_mqtt_listener_.publishReprintFile(gcode_file);
+  reprint_file_override_[0] = '\0';
 }
 
 void Application::publishBlePrinterStatus() {
@@ -567,6 +614,72 @@ void Application::updateLed(const uint32_t nowMs) {
   }
 
   digitalWrite(LED_PIN, ble_service_.isConnected() ? HIGH : LOW);
+}
+
+void Application::handleListFiles() {
+  ble_service_.publishFilesList(buildFilesListJson().c_str());
+}
+
+void Application::addReprintFile(const char* subtask_name, const char* param) {
+  if (!subtask_name || subtask_name[0] == '\0') return;
+  if (!param || param[0] == '\0') return;
+
+  // Derive "basename_plate_N.gcode" from subtask_name + param
+  char base[96];
+  strncpy(base, subtask_name, sizeof(base) - 1);
+  base[sizeof(base) - 1] = '\0';
+  const size_t blen = strlen(base);
+  if (blen > 4 && strcmp(base + blen - 4, ".3mf") == 0) base[blen - 4] = '\0';
+
+  const char* pt = strstr(param, "plate_");
+  const int plate_n = (pt != nullptr) ? atoi(pt + 6) : 1;
+
+  char entry[100];
+  snprintf(entry, sizeof(entry), "%s_plate_%d.gcode", base, plate_n > 0 ? plate_n : 1);
+
+  // Already most recent → no-op
+  if (reprint_files_count_ > 0 && strcmp(reprint_files_[0], entry) == 0) return;
+
+  // Check if file already exists anywhere in the list
+  bool is_new = true;
+  uint8_t shift_from = reprint_files_count_ < kMaxReprintFiles
+                           ? reprint_files_count_
+                           : kMaxReprintFiles - 1;
+  for (uint8_t i = 1; i < reprint_files_count_; i++) {
+    if (strcmp(reprint_files_[i], entry) == 0) {
+      shift_from = i;
+      is_new = false;
+      break;
+    }
+  }
+
+  // Move to front in memory (always — keeps dropdown sorted by recency)
+  for (uint8_t i = shift_from; i > 0; i--) {
+    strncpy(reprint_files_[i], reprint_files_[i - 1], sizeof(reprint_files_[0]));
+  }
+  strncpy(reprint_files_[0], entry, sizeof(reprint_files_[0]) - 1);
+  reprint_files_[0][sizeof(reprint_files_[0]) - 1] = '\0';
+  if (is_new && reprint_files_count_ < kMaxReprintFiles) reprint_files_count_++;
+
+  // Write NVS only for genuinely new files — preserves flash write cycles
+  if (is_new) {
+    Serial.print("[app] file learned (new): "); Serial.println(entry);
+    flash_store_.saveFilesList(buildFilesListJson());
+  } else {
+    Serial.print("[app] file seen again: "); Serial.println(entry);
+  }
+}
+
+String Application::buildFilesListJson() const {
+  String json = "[";
+  for (uint8_t i = 0; i < reprint_files_count_; i++) {
+    if (i > 0) json += ",";
+    json += "\"";
+    json += reprint_files_[i];
+    json += "\"";
+  }
+  json += "]";
+  return json;
 }
 
 }  // namespace app

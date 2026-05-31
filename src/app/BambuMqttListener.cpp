@@ -149,37 +149,66 @@ void BambuMqttListener::publishReprintFile(const char* gcode_file) {
     return;
   }
 
+  // If input is a standalone .gcode with _plate_N pattern (e.g. from FTP listing),
+  // derive the 3MF name and plate number automatically.
+  // e.g. "W62245_DA_sokil500_6x_plate_2.gcode" → 3mf="W62245_DA_sokil500_6x.3mf", plate=2
+  char url_file[96];
+  char derived_param[32] = {0};
+  strncpy(url_file, gcode_file, sizeof(url_file) - 1);
+  url_file[sizeof(url_file) - 1] = '\0';
+
+  const size_t flen = strlen(gcode_file);
+  if (flen > 6 && strcmp(gcode_file + flen - 6, ".gcode") == 0) {
+    const char* pm = strstr(gcode_file, "_plate_");
+    if (pm != nullptr) {
+      const int pn = atoi(pm + 7);  // "_plate_" = 7 chars
+      if (pn > 0) {
+        snprintf(url_file, sizeof(url_file), "%.*s.3mf", (int)(pm - gcode_file), gcode_file);
+        snprintf(derived_param, sizeof(derived_param), "Metadata/plate_%d.gcode", pn);
+      }
+    }
+  }
+
+  // Param priority: derived from .gcode filename > learned from BambuStudio > plate_1
+  const char* param_str = (derived_param[0] != '\0')      ? derived_param
+                        : (last_project_param_[0] != '\0') ? last_project_param_
+                        :                                    "Metadata/plate_1.gcode";
+
+  int plate_idx = 0;
+  const char* plate_tag = strstr(param_str, "plate_");
+  if (plate_tag != nullptr) {
+    plate_idx = atoi(plate_tag + 6) - 1;
+    if (plate_idx < 0) plate_idx = 0;
+  }
+
   JsonDocument doc;
   JsonObject print = doc["print"].to<JsonObject>();
   print["sequence_id"] = "1";
   print["command"] = "project_file";
-  print["param"] = "Metadata/plate_1.gcode";
-  print["subtask_name"] = gcode_file;
-  print["plate_idx"] = 0;
+  print["param"] = param_str;
+  print["subtask_name"] = url_file;
+  print["plate_idx"] = plate_idx;
 
   String url = "file:///sdcard/cache/";
-  url += gcode_file;
+  url += url_file;
   print["url"] = url.c_str();
 
-  print["project_id"] = "0";
-  print["profile_id"] = "0";
-  print["task_id"] = "0";
-  print["subtask_id"] = "0";
-  print["file"] = "";
-  print["md5"] = "";
   print["timelapse"] = false;
-  print["bed_type"] = "auto";
-  print["bed_levelling"] = true;
+  print["bed_leveling"] = true;
   print["flow_cali"] = false;
   print["vibration_cali"] = false;
   print["layer_inspect"] = false;
   print["use_ams"] = false;
-  print["ams_mapping"].to<JsonArray>();
+  print["ams_mapping"].to<JsonArray>().add(-1);
 
   char payload[512];
   if (serializeJson(doc, payload, sizeof(payload)) >= sizeof(payload)) {
     if (serial_) serial_->println("[mqtt] reprint: payload overflow");
     return;
+  }
+  if (serial_) {
+    serial_->print("[mqtt] reprint payload: ");
+    serial_->println(payload);
   }
   publishJson(payload);
 }
@@ -220,14 +249,17 @@ void BambuMqttListener::handleMessageThunk(char* topic, uint8_t* payload, unsign
 void BambuMqttListener::handleMessage(const char* topic,
                                       const uint8_t* payload,
                                       const unsigned int length) {
-  (void)topic;
-
   JsonDocument filter;
   JsonObject print_filter = filter["print"].to<JsonObject>();
   print_filter["gcode_state"] = true;
   print_filter["gcode_file"] = true;
   print_filter["subtask_name"] = true;
   print_filter["print_error"] = true;
+  print_filter["result"] = true;
+  print_filter["msg"] = true;
+  print_filter["command"] = true;
+  print_filter["param"] = true;
+  print_filter["sequence_id"] = true;
   print_filter["nozzle_temper"] = true;
   print_filter["nozzle_target_temper"] = true;
   print_filter["bed_temper"] = true;
@@ -268,7 +300,13 @@ void BambuMqttListener::handleMessage(const char* topic,
   const char* raw_for_url = gcode_file;
   if ((raw_for_url == nullptr || raw_for_url[0] == '\0') &&
       subtask_name != nullptr && subtask_name[0] != '\0') {
-    snprintf(subtask_with_ext, sizeof(subtask_with_ext), "%s.3mf", subtask_name);
+    const size_t slen = strlen(subtask_name);
+    const bool already_has_ext = slen > 4 && strcmp(subtask_name + slen - 4, ".3mf") == 0;
+    if (already_has_ext) {
+      SafeCopy(subtask_with_ext, sizeof(subtask_with_ext), subtask_name);
+    } else {
+      snprintf(subtask_with_ext, sizeof(subtask_with_ext), "%s.3mf", subtask_name);
+    }
     raw_for_url = subtask_with_ext;
   }
 
@@ -300,6 +338,57 @@ void BambuMqttListener::handleMessage(const char* topic,
   SafeCopy(telemetry_.file_name, sizeof(telemetry_.file_name), file_name);
   telemetry_.valid = true;
 
+  // Log printer responses and capture project_file param from external sources (BambuStudio/Handy)
+  {
+    const char* result  = print["result"].as<const char*>();
+    const char* msg     = print["msg"].as<const char*>();
+    const char* command = print["command"].as<const char*>();
+    const char* param   = print["param"].as<const char*>();
+    const char* seq_id  = print["sequence_id"].as<const char*>();
+    const int   err     = print["print_error"] | 0;
+
+    if (result != nullptr && result[0] != '\0') {
+      if (serial_) {
+        serial_->print("[mqtt] printer result=");
+        serial_->print(result);
+        if (msg != nullptr && msg[0] != '\0') {
+          serial_->print(" msg=");
+          serial_->print(msg);
+        }
+        serial_->print(" topic=");
+        serial_->println(topic);
+      }
+
+      // Capture param and notify Application when any project_file succeeds
+      if (command != nullptr && strcmp(command, "project_file") == 0 &&
+          strcmp(result, "success") == 0 &&
+          param != nullptr && param[0] != '\0') {
+        // Update stored param only for external sources (BambuStudio uses large sequence_ids)
+        const bool is_our_cmd = (seq_id != nullptr && strcmp(seq_id, "1") == 0);
+        if (!is_our_cmd) {
+          SafeCopy(last_project_param_, sizeof(last_project_param_), param);
+        }
+        // Notify Application to add file to persistent history
+        if (on_new_file_learned_ &&
+            subtask_name != nullptr && subtask_name[0] != '\0') {
+          on_new_file_learned_(subtask_name, param);
+        }
+        if (serial_) {
+          serial_->print("[mqtt] file learned: ");
+          serial_->print(subtask_name ? subtask_name : "?");
+          serial_->print(" param=");
+          serial_->println(param);
+        }
+      }
+    }
+    if (err != 0) {
+      if (serial_) {
+        serial_->print("[mqtt] print_error=");
+        serial_->println(err);
+      }
+    }
+  }
+
   if (on_telemetry_update_) on_telemetry_update_();
 
   // Print event logic
@@ -308,6 +397,10 @@ void BambuMqttListener::handleMessage(const char* topic,
   }
 
   if (!initial_state_seen_) {
+    if (serial_) {
+      serial_->print("[mqtt] initial gcode_state=");
+      serial_->println(gcode_state);
+    }
     rememberState(gcode_state);
     initial_state_seen_ = true;
     return;
@@ -315,6 +408,13 @@ void BambuMqttListener::handleMessage(const char* topic,
 
   if (strncmp(last_gcode_state_, gcode_state, sizeof(last_gcode_state_)) == 0) {
     return;
+  }
+
+  if (serial_) {
+    serial_->print("[mqtt] gcode_state: ");
+    serial_->print(last_gcode_state_);
+    serial_->print(" -> ");
+    serial_->println(gcode_state);
   }
 
   const bool became_finished = isFinishedState(gcode_state) && !isFinishedState(last_gcode_state_);
@@ -340,6 +440,11 @@ void BambuMqttListener::ensureConnection(const uint32_t now_ms) {
     consecutive_failures = 0;
     printer_offline = false;
     return;
+  }
+
+  if (serial_) {
+    serial_->print("[mqtt] disconnected, state=");
+    serial_->println(mqtt_client_.state());
   }
 
   const uint32_t reconnect_interval_ms =

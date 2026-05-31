@@ -13,6 +13,7 @@ constexpr const char* kEnvDataUUID = "beb5483e-36e1-4688-b7f5-ea07361b26b0";
 constexpr const char* kCmdUUID = "beb5483e-36e1-4688-b7f5-ea07361b26b2";
 constexpr const char* kConfigUUID = "beb5483e-36e1-4688-b7f5-ea07361b26b3";
 constexpr const char* kPrinterStatusUUID = "beb5483e-36e1-4688-b7f5-ea07361b26b4";
+constexpr const char* kFilesListUUID     = "beb5483e-36e1-4688-b7f5-ea07361b26b5";
 
 constexpr uint16_t kBleAppearance = 0x0540;
 constexpr uint16_t kBleAdvIntervalMs = 500;

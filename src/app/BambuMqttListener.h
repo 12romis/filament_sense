@@ -52,6 +52,7 @@ class BambuMqttListener {
   const char* getLastGcodeFile() const { return last_raw_gcode_file_; }
 
   void setOnTelemetryUpdate(std::function<void()> cb) { on_telemetry_update_ = std::move(cb); }
+  void setOnNewFileLearned(std::function<void(const char*, const char*)> cb) { on_new_file_learned_ = std::move(cb); }
 
   void debugTestPayload();
   void debugTestPayloadRunning();
@@ -82,10 +83,12 @@ class BambuMqttListener {
   char last_gcode_state_[24] = {0};
   char last_file_name_[96] = {0};
   char last_raw_gcode_file_[96] = {0};
+  char last_project_param_[48] = {0};   // e.g. "Metadata/plate_2.gcode", learned from printer echo
   bool initial_state_seen_ = false;
 
   BambuTelemetry telemetry_;
   std::function<void()> on_telemetry_update_;
+  std::function<void(const char*, const char*)> on_new_file_learned_;
 
   static BambuMqttListener* instance_;
 };

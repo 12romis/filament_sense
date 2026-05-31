@@ -40,14 +40,16 @@ class BleService {
   void publishEnvData(const EnvPayload& p);
   void publishConfig(const char* json);
   void publishPrinterStatus(const char* json);
+  void publishFilesList(const char* json);
 
   void setOnSaveBaseline(std::function<void()> cb) { on_save_baseline_ = std::move(cb); }
   void setOnManualReport(std::function<void()> cb) { on_manual_report_ = std::move(cb); }
   void setOnSetTare(std::function<void(float value, int nominal)> cb) { on_set_tare_ = std::move(cb); }
   void setOnConfigUpdate(std::function<void(const char*)> cb) { on_config_update_ = std::move(cb); }
   void setOnHeatBed(std::function<void(int target)> cb) { on_heat_bed_ = std::move(cb); }
-  void setOnReprint(std::function<void()> cb) { on_reprint_ = std::move(cb); }
+  void setOnReprint(std::function<void(const char*)> cb) { on_reprint_ = std::move(cb); }
   void setOnGetPrinterStatus(std::function<void()> cb) { on_get_printer_status_ = std::move(cb); }
+  void setOnListFiles(std::function<void()> cb) { on_list_files_ = std::move(cb); }
 
  private:
   void initServer();
@@ -61,6 +63,7 @@ class BleService {
   NimBLECharacteristic* cmd_char_ = nullptr;
   NimBLECharacteristic* config_char_ = nullptr;
   NimBLECharacteristic* printer_status_char_ = nullptr;
+  NimBLECharacteristic* files_list_char_ = nullptr;
 
   BleConnectionState connection_state_ = BleConnectionState::kDisconnected;
   uint32_t last_adv_check_ms_ = 0;
@@ -70,8 +73,9 @@ class BleService {
   std::function<void(float, int)> on_set_tare_;
   std::function<void(const char*)> on_config_update_;
   std::function<void(int)> on_heat_bed_;
-  std::function<void()> on_reprint_;
+  std::function<void(const char*)> on_reprint_;
   std::function<void()> on_get_printer_status_;
+  std::function<void()> on_list_files_;
 };
 
 }  // namespace ble

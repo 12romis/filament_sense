@@ -141,4 +141,16 @@ bool FlashStore::loadNominalWeight(int& nominalGrams) {
   return nominalGrams > 0;
 }
 
+bool FlashStore::saveFilesList(const String& json) {
+  if (!initialized_) return false;
+  return preferences_.putString(kFilesListKey, json) > 0;
+}
+
+bool FlashStore::loadFilesList(String& json) {
+  if (!initialized_) return false;
+  if (!preferences_.isKey(kFilesListKey)) return false;
+  json = preferences_.getString(kFilesListKey, "");
+  return json.length() > 0;
+}
+
 }  // namespace storage

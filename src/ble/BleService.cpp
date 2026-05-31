@@ -43,14 +43,16 @@ class CmdCallbacks : public NimBLECharacteristicCallbacks {
                         std::function<void()> onManualReport,
                         std::function<void(float, int)> onSetTare,
                         std::function<void(int)> onHeatBed,
-                        std::function<void()> onReprint,
-                        std::function<void()> onGetPrinterStatus)
+                        std::function<void(const char*)> onReprint,
+                        std::function<void()> onGetPrinterStatus,
+                        std::function<void()> onListFiles)
       : on_save_baseline_(std::move(onSaveBaseline)),
         on_manual_report_(std::move(onManualReport)),
         on_set_tare_(std::move(onSetTare)),
         on_heat_bed_(std::move(onHeatBed)),
         on_reprint_(std::move(onReprint)),
-        on_get_printer_status_(std::move(onGetPrinterStatus)) {}
+        on_get_printer_status_(std::move(onGetPrinterStatus)),
+        on_list_files_(std::move(onListFiles)) {}
 
   void onWrite(NimBLECharacteristic* chr, NimBLEConnInfo& info) override {
     (void)info;
@@ -84,11 +86,17 @@ class CmdCallbacks : public NimBLECharacteristicCallbacks {
       Serial.print("[ble] heat_bed target="); Serial.println(target);
       if (on_heat_bed_) on_heat_bed_(target);
     } else if (strcmp(cmd, "reprint") == 0) {
-      Serial.println("[ble] reprint");
-      if (on_reprint_) on_reprint_();
+      const char* file = doc["file"] | "";
+      Serial.print("[ble] reprint");
+      if (file[0] != '\0') { Serial.print(" file="); Serial.print(file); }
+      Serial.println();
+      if (on_reprint_) on_reprint_(file);
     } else if (strcmp(cmd, "get_printer_status") == 0) {
       Serial.println("[ble] get_printer_status");
       if (on_get_printer_status_) on_get_printer_status_();
+    } else if (strcmp(cmd, "list_files") == 0) {
+      Serial.println("[ble] list_files");
+      if (on_list_files_) on_list_files_();
     } else {
       Serial.print("[ble] unknown cmd: "); Serial.println(cmd);
     }
@@ -99,8 +107,9 @@ class CmdCallbacks : public NimBLECharacteristicCallbacks {
   std::function<void()> on_manual_report_;
   std::function<void(float, int)> on_set_tare_;
   std::function<void(int)> on_heat_bed_;
-  std::function<void()> on_reprint_;
+  std::function<void(const char*)> on_reprint_;
   std::function<void()> on_get_printer_status_;
+  std::function<void()> on_list_files_;
 };
 
 class ConfigCallbacks : public NimBLECharacteristicCallbacks {
@@ -189,6 +198,7 @@ void BleService::initService() {
   auto* on_heat   = &on_heat_bed_;
   auto* on_rep    = &on_reprint_;
   auto* on_status = &on_get_printer_status_;
+  auto* on_list   = &on_list_files_;
   cmd_char_ = service_->createCharacteristic(
       config::kCmdUUID,
       NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
@@ -197,8 +207,9 @@ void BleService::initService() {
       [on_manual]()          { if (*on_manual) (*on_manual)(); },
       [on_tare](float v, int n) { if (*on_tare) (*on_tare)(v, n); },
       [on_heat](int t)       { if (*on_heat)   (*on_heat)(t);  },
-      [on_rep]()             { if (*on_rep)    (*on_rep)();    },
-      [on_status]()          { if (*on_status) (*on_status)(); }));
+      [on_rep](const char* f){ if (*on_rep)    (*on_rep)(f);   },
+      [on_status]()          { if (*on_status) (*on_status)(); },
+      [on_list]()            { if (*on_list)   (*on_list)();   }));
 
   auto* on_config = &on_config_update_;
   config_char_ = service_->createCharacteristic(
@@ -218,6 +229,14 @@ void BleService::initService() {
     const char* placeholder = "{}";
     printer_status_char_->setValue(
         reinterpret_cast<const uint8_t*>(placeholder), std::strlen(placeholder));
+  }
+
+  files_list_char_ = service_->createCharacteristic(
+      config::kFilesListUUID,
+      NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+  {
+    const char* empty = "[]";
+    files_list_char_->setValue(reinterpret_cast<const uint8_t*>(empty), std::strlen(empty));
   }
 }
 
@@ -269,6 +288,13 @@ void BleService::publishPrinterStatus(const char* json) {
   printer_status_char_->setValue(
       reinterpret_cast<const uint8_t*>(json), std::strlen(json));
   printer_status_char_->notify();
+}
+
+void BleService::publishFilesList(const char* json) {
+  if (!json) return;
+  files_list_char_->setValue(
+      reinterpret_cast<const uint8_t*>(json), std::strlen(json));
+  files_list_char_->notify();
 }
 
 }  // namespace ble

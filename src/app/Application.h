@@ -33,7 +33,10 @@ class Application {
   void handleBambuPrintEvent(const BambuPrintEvent& event, uint32_t nowMs);
   void handleConfigUpdate(const char* json);
   void handleHeatBed(int target, uint32_t nowMs);
-  void handleReprint(uint32_t nowMs);
+  void handleReprint(const char* file_override, uint32_t nowMs);
+  void handleListFiles();
+  void addReprintFile(const char* subtask_name, const char* param);
+  String buildFilesListJson() const;
   void handleGetPrinterStatus();
   void tickPrinterCmdState(uint32_t nowMs);
   void buildHeatSteps(int target);
@@ -91,13 +94,19 @@ class Application {
   uint32_t led_toggle_time_ = 0;
 
   // Printer command state machine
-  enum class PrinterCmdState : uint8_t { kIdle, kHeating };
+  enum class PrinterCmdState : uint8_t { kIdle, kHeating, kWaitingToReprint };
   PrinterCmdState printer_cmd_state_ = PrinterCmdState::kIdle;
   int  heat_steps_[8] = {};
   int  heat_num_steps_ = 0;
   int  heat_step_index_ = 0;
   uint32_t last_heat_step_ms_ = 0;
   bool reprint_after_heat_ = false;
+  uint32_t reprint_wait_start_ms_ = 0;
+  char reprint_file_override_[96] = {0};
+
+  static constexpr uint8_t kMaxReprintFiles = 10;
+  char reprint_files_[kMaxReprintFiles][100] = {};
+  uint8_t reprint_files_count_ = 0;
 
   struct BleCmd {
     enum class Type : uint8_t {
@@ -107,10 +116,12 @@ class Application {
       kHeatBed,
       kReprint,
       kGetPrinterStatus,
+      kListFiles,
     } type;
     float tare_value{0.0f};
     int tare_nominal{0};
     int int_param{0};
+    char file_override[96]{};   // optional filename for kReprint
   };
   QueueHandle_t ble_cmd_queue_{nullptr};
 };

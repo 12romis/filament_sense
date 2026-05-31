@@ -22,6 +22,8 @@ class FlashStore {
   bool loadBambuMqttHost(char* outBuf, size_t bufSize);
   bool saveNominalWeight(int nominalGrams);
   bool loadNominalWeight(int& nominalGrams);
+  bool saveFilesList(const String& json);
+  bool loadFilesList(String& json);
 
  private:
   static constexpr const char* kNamespace = "filamentsense";
@@ -31,6 +33,7 @@ class FlashStore {
   static constexpr const char* kHx711TareOffsetKey = "hx711TareOffset";
   static constexpr const char* kMqttHostKey = "mqttHost";
   static constexpr const char* kNominalWeightKey = "nominalWeight";
+  static constexpr const char* kFilesListKey     = "filesList";
 
   Preferences preferences_;
   bool initialized_ = false;
